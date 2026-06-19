@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "REC_AI",
+    "slug": "rec-ai",
+    "version": "1.0.0-beta.4",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#000000",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.glue010.recai",
+      "adaptiveIcon": {
+        "backgroundColor": "#FF3636",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Pozwól REC_AI nagrywać dźwięk z mikrofonu.",
+          "recordAudioAndroid": true,
+          "enableBackgroundRecording": false
+        }
+      ],
+      "expo-asset",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#000000",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "dark": { "backgroundColor": "#000000", "image": "./assets/splash-icon.png", "imageWidth": 180 }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4a6d49b8-4038-47fc-88c8-4391695c79bd"
+      }
+    },
+    "owner": "marcinciupa"
+  }
+}

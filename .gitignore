@@ -1,0 +1,20 @@
+# Zależności (odtwarzają się komendą `npm install` — nie trzymamy w gicie)
+node_modules/
+
+# Build / Expo
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+
+# Pliki lokalne / sekrety
+.env
+.env.local
+mobile/.env
+
+# Lokalna konfiguracja Claude Code
+.claude/
+
+# Śmieci systemowe
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
