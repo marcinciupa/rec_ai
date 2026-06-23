@@ -15,17 +15,17 @@ import type { SliderConfig } from '../components/chrome/SeekSlider';
 import { ScreenTopBar, BottomBar, Mode } from './ScreenChrome';
 import type { Rec, RecordingsStore } from '../hooks/useRecordings';
 import { genericName } from '../hooks/useRecordings';
+import type { TranscriptionStore } from '../hooks/useTranscription';
+import { useChatView } from './ChatView';
 
 type Phase = 'LIST' | 'CONFIRM' | 'DELETED';
-type View2 = 'LIST' | 'PLAYER';
+type View2 = 'LIST' | 'PLAYER' | 'CHAT';
 type PlayerState = 'LOADING' | 'STOPPED' | 'PLAYING' | 'PAUSED';
 
 // nazwa: AI → tytuł; bez transkrypcji → generyczna z daty + numer (stały seq, fallback: pozycja w dniu)
 const dayOrdinal = (list: Rec[], r: Rec) => list.filter((x) => x.date === r.date).findIndex((x) => x.id === r.id) + 1;
 const displayName = (r: Rec, list: Rec[]) =>
   r.transcribed && r.title ? r.title : genericName(r.date, r.seq ?? dayOrdinal(list, r));
-
-const MOCK_TITLES = ['MEETING NOTES', 'LISTA ZAKUPÓW', 'PODCAST DRAFT', 'INTERVIEW SNIPPET', 'PROJECT BRAINSTORM', 'VOICE MEMO'];
 
 // scrub: setInterval w knobie ~100ms (10×/s); SCRUB_STEP*10 = maks. krotność prędkości (≈10×)
 const SCRUB_STEP = 1.0;
@@ -142,6 +142,7 @@ export function usePlaybackScreen({
   onCycleMode,
   onOpenSettings,
   onStartRecording,
+  transcription,
 }: {
   store: RecordingsStore;
   mono?: boolean;
@@ -149,8 +150,9 @@ export function usePlaybackScreen({
   onCycleMode?: () => void;
   onOpenSettings?: () => void;
   onStartRecording?: () => void;
+  transcription?: TranscriptionStore;
 }) {
-  const { recordings: recs, removeById, insertAt, update } = store;
+  const { recordings: recs, removeById, insertAt } = store;
   const [rawSel, setSelId] = useState<string>('');
   // selId zawsze ważne (po dodaniu/usunięciu nagrań fallback na pierwsze)
   const selId = recs.some((r) => r.id === rawSel) ? rawSel : recs[0]?.id ?? '';
@@ -160,10 +162,8 @@ export function usePlaybackScreen({
   const [pos, setPos] = useState(0); // sekundy w bieżącym nagraniu
   const [loadPct, setLoadPct] = useState(0);
   const [speed, setSpeed] = useState(1); // 1× / 2×
-  const [transcribePct, setTranscribePct] = useState<number | null>(null);
-  const mockTitleN = useRef(0);
   const lastDeleted = useRef<{ rec: Rec; index: number; name: string } | null>(null);
-  const timers = useRef<{ ret?: any; connect?: any; prog?: any }>({});
+  const timers = useRef<{ ret?: any }>({});
   // scrub realnego pliku: pauza na czas przewijania, lokalna pozycja, wznowienie po puszczeniu
   const scrubbing = useRef(false);
   const wasPlaying = useRef(false);
@@ -176,6 +176,8 @@ export function usePlaybackScreen({
   // realny odtwarzacz pliku (gdy nagranie ma uri); demo (bez uri) = mock niżej. Web → stub no-op.
   const { player, status: pstatus } = usePlayer();
   const realMode = view === 'PLAYER' && !!sel?.uri;
+  // pod-widok czatu o notatce (hook zawsze zamontowany; aktywny dopiero w view==='CHAT')
+  const chatView = useChatView({ rec: sel, active: view === 'CHAT', mode, mono, onBack: () => setView('PLAYER') });
 
   // ── PLAYER: ładowanie (tylko demo/mock; realny plik ma własny status) ──
   useEffect(() => {
@@ -216,8 +218,6 @@ export function usePlaybackScreen({
     () => () => {
       const t = timers.current;
       clearTimeout(t.ret);
-      clearTimeout(t.connect);
-      clearInterval(t.prog);
     },
     []
   );
@@ -366,34 +366,21 @@ export function usePlaybackScreen({
     setPhase('LIST');
   };
 
-  // ── TRANS-CRIBE: mock w tle; po 100% plik staje się transkrybowany (nazwa od AI) ──
+  // ── TRANS-CRIBE: realna transkrypcja przez manager (upload → backend). Wymaga pliku (uri). ──
   const transcribe = () => {
-    if (!sel || sel.transcribed) return;
-    const id = sel.id;
-    clearTimeout(timers.current.connect);
-    clearInterval(timers.current.prog);
-    setTranscribePct(null);
-    timers.current.connect = setTimeout(() => {
-      setTranscribePct(0);
-      timers.current.prog = setInterval(() => {
-        setTranscribePct((p) => {
-          const np = (p ?? 0) + 4;
-          if (np >= 100) {
-            clearInterval(timers.current.prog);
-            const title = MOCK_TITLES[mockTitleN.current % MOCK_TITLES.length];
-            mockTitleN.current += 1;
-            update(id, { transcribed: true, title });
-            setTimeout(() => setTranscribePct(null), 1000);
-            return 100;
-          }
-          return np;
-        });
-      }, 600);
-    }, 1500);
+    if (!sel || sel.transcribed || !sel.uri) return; // demo bez pliku → nie ma czego transkrybować
+    transcription?.start(sel);
   };
 
+  // realny stan transkrypcji zaznaczonego nagrania (z managera)
+  const tState = transcription?.stateOf(selId);
+  const transcribePct = tState && (tState.status === 'uploading' || tState.status === 'processing') ? tState.pct ?? 0 : null;
   const ai: [string, string] | undefined =
-    transcribePct != null ? ['AI TRANSCRIBING', `IN BACKGROUND (${transcribePct}%)`] : undefined;
+    transcribePct != null
+      ? ['AI TRANSCRIBING', `IN BACKGROUND (${transcribePct}%)`]
+      : tState?.status === 'failed'
+        ? ['AI TRANSCRIPTION', 'FAILED']
+        : undefined;
 
   // systemowy back: zamknij prompt/panel → wyjdź z odtwarzacza → (false = App cofa do nagrywania)
   const goBack = (): boolean => {
@@ -402,12 +389,21 @@ export function usePlaybackScreen({
       setPhase('LIST');
       return true;
     }
+    if (view === 'CHAT') {
+      setView('PLAYER');
+      return true;
+    }
     if (view === 'PLAYER') {
       backToList();
       return true;
     }
     return false;
   };
+
+  // ════════════ WIDOK: CHAT ════════════
+  if (view === 'CHAT') {
+    return { content: chatView.content, keyboard: chatView.keyboard, goBack };
+  }
 
   // ════════════ WIDOK: PLAYER ════════════
   if (view === 'PLAYER') {
@@ -432,7 +428,11 @@ export function usePlaybackScreen({
       keyboard = {
         screen: [
           deleteKey,
-          { label: 'TRANS-\nCRIBE', onPress: transcribe },
+          sel?.transcribed && sel?.uri
+            ? { label: 'ASK\nAI', variant: 'primary' as const, onPress: () => { haltPlayer(); setView('CHAT'); } }
+            : sel?.uri && !sel?.transcribed
+              ? { label: 'TRANS-\nCRIBE', onPress: transcribe }
+              : { label: '' },
           // gra → toggle prędkości (label = co zrobi klik: przy 1× „2X SPEED", przy 2× „1X SPEED"); inaczej → RECORDINGS
           playing ? { label: speed === 1 ? '2X\nSPEED' : '1X\nSPEED', onPress: toggleSpeed } : { label: 'RECORD-\nINGS', onPress: backToList },
         ],
@@ -543,7 +543,7 @@ export function usePlaybackScreen({
       screen: [
         { label: 'DELETE', supporting: '[HOLD]', variant: 'risk', onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 },
         { label: 'SETTINGS', onPress: onOpenSettings },
-        sel && !sel.transcribed ? { label: 'TRANS-\nCRIBE', onPress: transcribe } : { label: '' },
+        sel && !sel.transcribed && sel.uri ? { label: 'TRANS-\nCRIBE', onPress: transcribe } : { label: '' },
       ],
       metal: [
         { type: 'label', upper: 'STOP', active: false },

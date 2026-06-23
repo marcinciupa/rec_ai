@@ -16,6 +16,7 @@ import { useSettingsScreen } from './src/screens/SettingsScreen';
 import { useRecordingScreen } from './src/screens/RecordingScreen';
 import { usePlaybackScreen } from './src/screens/PlaybackScreen';
 import { useRecordings } from './src/hooks/useRecordings';
+import { useTranscription } from './src/hooks/useTranscription';
 import { Mode, nextMode } from './src/screens/ScreenChrome';
 
 // Android dodaje includeFontPadding (extra padding wg metryk fontu) → linia tekstu wyższa niż w Figmie/na web.
@@ -49,6 +50,8 @@ export default function App() {
 
   // Wspólny store nagrań — dzielony przez nagrywanie (zapis) i playback (lista).
   const recStore = useRecordings();
+  // Manager realnej transkrypcji (upload → backend deAPI), dzielony przez oba ekrany.
+  const transcription = useTranscription(recStore);
 
   // Oba hooki zawsze zamontowane (reguły hooków + zachowanie stanu między trybami).
   const settings = useSettingsScreen({ onClose: closeSettings, mode, onCycleMode: cycleMode });
@@ -61,6 +64,7 @@ export default function App() {
     onOpenRecordings: () => setMode('PLAYBACK'),
     onSave: recStore.add,
     recordings: recStore.recordings,
+    transcription,
   });
   const playback = usePlaybackScreen({
     store: recStore,
@@ -69,6 +73,7 @@ export default function App() {
     onCycleMode: cycleMode,
     onOpenSettings: () => setMode('SETTINGS'),
     onStartRecording: () => setMode('RECORDING'),
+    transcription,
   });
   const variant = settings.fullscreen ? 'fullscreen' : 'device';
 

@@ -14,6 +14,8 @@ import { useAudioCapture } from '../hooks/useAudioCapture';
 import { usePlayer } from '../hooks/usePlayer';
 import type { Rec } from '../hooks/useRecordings';
 import { genericName, nextSeq } from '../hooks/useRecordings';
+import type { TranscriptionStore } from '../hooks/useTranscription';
+import { persistRecording } from '../lib/recordingFiles';
 
 // redukcja obwiedni do N słupków (peak w każdym przedziale)
 const downsample = (arr: number[], n: number): number[] => {
@@ -134,6 +136,7 @@ export function useRecordingScreen({
   onOpenRecordings,
   onSave,
   recordings = [],
+  transcription,
 }: {
   aiEnabled: boolean;
   mono?: boolean;
@@ -143,6 +146,7 @@ export function useRecordingScreen({
   onOpenRecordings?: () => void;
   onSave?: (rec: Rec) => void;
   recordings?: Rec[];
+  transcription?: TranscriptionStore;
 }) {
   const capture = useAudioCapture();
   // odtwarzacz do szybkiego podglądu właśnie zapisanego pliku (klawisz PLAY/PAUSE w stanie SAVED)
@@ -155,11 +159,11 @@ export function useRecordingScreen({
   const recName = genericName(recDate, recSeq);
   const [state, setState] = useState<RecState>('READY');
   const [elapsed, setElapsed] = useState(0);
-  // transkrypcja w tle (niezależna od ekranu): null = brak/idle, 0..100 = postęp.
-  const [transcribePct, setTranscribePct] = useState<number | null>(null);
+  // id ostatnio zapisanego nagrania — realny stan transkrypcji czytamy z managera (useTranscription)
+  const [lastSavedId, setLastSavedId] = useState<string | undefined>(undefined);
   // przerwanie nagrania: baner „RECORDING ABORTED" przez 3 s (plik NIE zapisany)
   const [abortedFlash, setAbortedFlash] = useState(false);
-  const timers = useRef<{ connect?: any; prog?: any; ret?: any; abort?: any }>({});
+  const timers = useRef<{ ret?: any; abort?: any }>({});
   // obwiednia amplitudy: próbkujemy realny poziom w trakcie nagrywania → zapisujemy z plikiem
   const levelRef = useRef(capture.level);
   levelRef.current = capture.level;
@@ -185,8 +189,6 @@ export function useRecordingScreen({
   useEffect(
     () => () => {
       const t = timers.current;
-      clearTimeout(t.connect);
-      clearInterval(t.prog);
       clearTimeout(t.ret);
       clearTimeout(t.abort);
     },
@@ -271,44 +273,40 @@ export function useRecordingScreen({
   // zapisz nagranie do wspólnego store (realny plik z uri, albo mock bez uri na web)
   const saveRecording = async (lengthSec: number) => {
     const captured = await capture.stop();
-    setSavedUri(captured?.uri); // udostępnij pod klawiszem PLAY/PAUSE w oknie SAVED
-    onSave?.({
-      id: `rec_${Date.now()}`,
-      uri: captured?.uri,
+    const id = `rec_${Date.now()}`;
+    // przenieś nagrany plik z cache do TRWAŁEGO katalogu (documentDirectory/recordings/<id>.aac);
+    // bez tego OS może skasować cache i nagranie przepada po restarcie
+    let uri = captured?.uri;
+    let sizeBytes = captured?.sizeBytes;
+    if (uri) {
+      try {
+        const persisted = await persistRecording(uri, id);
+        uri = persisted.uri;
+        if (persisted.sizeBytes != null) sizeBytes = persisted.sizeBytes;
+      } catch {}
+    }
+    setSavedUri(uri); // udostępnij pod klawiszem PLAY/PAUSE w oknie SAVED (już trwały plik)
+    const rec: Rec = {
+      id,
+      uri,
       date: recDate,
       lengthSec: Math.max(1, lengthSec),
-      sizeBytes: captured?.sizeBytes,
+      sizeBytes,
       seq: recSeq, // stabilny numer dnia (zgodny z wyświetlaną nazwą)
       samples: samplesRef.current.length ? downsample(samplesRef.current, 48) : undefined, // obwiednia do waveformu
       transcribed: false,
-    });
+    };
+    setLastSavedId(id);
+    onSave?.(rec);
+    // AUTO TRANSCRIBE: od razu realna transkrypcja (tylko gdy mamy plik — natywnie)
+    if (aiEnabled && uri) transcription?.start(rec);
   };
   const stop = () => {
     setAbortedFlash(false);
     setState('SAVED');
-    saveRecording(elapsed); // async zapis pliku (nie blokuje UI)
+    saveRecording(elapsed); // async: zapis pliku + (gdy AUTO TRANSCRIBE) realna transkrypcja przez manager
     // „STOPPED AND SAVED" przez 3 s, potem auto-powrót do ready (chyba że odpalisz podgląd PLAY)
     armReturn();
-    // transkrypcja w tle (jeśli AI): connect ~1.5 s → procenty rosną do 100, działa też po powrocie do ready
-    if (aiEnabled) {
-      clearTimeout(timers.current.connect);
-      clearInterval(timers.current.prog);
-      setTranscribePct(null); // faza „connecting" → label ACTIVE ON DEAPI
-      timers.current.connect = setTimeout(() => {
-        setTranscribePct(0);
-        timers.current.prog = setInterval(() => {
-          setTranscribePct((p) => {
-            const np = (p ?? 0) + 4;
-            if (np >= 100) {
-              clearInterval(timers.current.prog);
-              setTimeout(() => setTranscribePct(null), 1000); // pokaż 100% chwilę, potem idle
-              return 100;
-            }
-            return np;
-          });
-        }, 600);
-      }, 1500);
-    }
   };
 
   const saved = state === 'SAVED';
@@ -361,11 +359,16 @@ export function useRecordingScreen({
     };
   }
 
-  // transkrypcja aktywna (procenty) → „TRANSCRIBING (X%)"; inaczej (idle/connecting) → „ACTIVE ON DEAPI"
+  // realny stan transkrypcji ostatniego nagrania (z managera): % → „TRANSCRIBING (X%)",
+  // błąd → „FAILED", idle → „ACTIVE ON DEAPI"
+  const tState = transcription?.stateOf(lastSavedId);
+  const tPct = tState && (tState.status === 'uploading' || tState.status === 'processing') ? tState.pct ?? 0 : null;
   const ai: [string, string] | undefined = aiEnabled
-    ? transcribePct != null
-      ? ['AI TRANSCRIBING', `IN BACKGROUND (${transcribePct}%)`]
-      : ['AI TRANSCRIPTION', 'ACTIVE ON DEAPI']
+    ? tPct != null
+      ? ['AI TRANSCRIBING', `IN BACKGROUND (${tPct}%)`]
+      : tState?.status === 'failed'
+        ? ['AI TRANSCRIPTION', 'FAILED']
+        : ['AI TRANSCRIPTION', 'ACTIVE ON DEAPI']
     : undefined;
 
   // waveform: recording = animowany, pełna czerwień; muted = animowany 0 (cisza); ready/paused = kropki
