@@ -1,6 +1,6 @@
 /**
- * Wspólne typy danych + dane demonstracyjne (seed). BEZ importów runtime — dzięki temu
- * db.ts (native), db.web.ts i useRecordings korzystają z nich bez cykli importów.
+ * Wspólne typy danych. BEZ importów runtime — dzięki temu db.ts (native), db.web.ts
+ * i useRecordings korzystają z nich bez cykli importów.
  */
 
 // Pojedyncze nagranie. uri = realny plik (nagrane); brak uri = pozycja demo (mock).
@@ -35,12 +35,3 @@ export type ChatMessage = {
   content: string;
   createdAt: number; // ms epoch
 };
-
-// Dane demonstracyjne — seed przy PIERWSZYM uruchomieniu (pusta baza). Bez uri → mock.
-// sortOrder malejąco: r1 na górze; nowe realne nagrania dostają wyższy sortOrder (ponad demo).
-export const SEED_RECORDINGS: Rec[] = [
-  { id: 'r1', date: '10/06/26', lengthSec: 23 * 60 + 11, transcribed: false, sortOrder: 4 },
-  { id: 'r2', title: 'SKEUMORPHIC UI IDEA', date: '9/06/26', lengthSec: 54 * 60 + 23, transcribed: true, sortOrder: 3 },
-  { id: 'r3', title: 'REC_AI DESIGN IDEAS', date: '7/06/26', lengthSec: 12 * 60 + 3, transcribed: true, sortOrder: 2 },
-  { id: 'r4', date: '7/06/26', lengthSec: 8 * 60 + 45, transcribed: false, sortOrder: 1 },
-];

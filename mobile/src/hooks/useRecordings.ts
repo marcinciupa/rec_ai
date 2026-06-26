@@ -8,7 +8,6 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import type { Rec } from '../lib/types';
-import { SEED_RECORDINGS } from '../lib/types';
 import * as db from '../lib/db';
 import { cleanupOrphanFiles } from '../lib/recordingFiles';
 
@@ -43,10 +42,9 @@ export function useRecordings() {
         setRecordings(recs);
         cleanupOrphanFiles(recs.map((r) => r.id)).catch(() => {});
       } catch {
-        // awaryjnie (np. błąd bazy): pokaż seed w pamięci, żeby UI działało
+        // awaryjnie (np. błąd bazy): pusta lista (widok „No recordings."), bez mocków
         if (!alive) return;
-        maxOrder.current = SEED_RECORDINGS.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
-        setRecordings(SEED_RECORDINGS);
+        setRecordings([]);
       }
     })();
     return () => {

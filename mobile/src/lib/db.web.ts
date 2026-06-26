@@ -4,10 +4,8 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Rec, Transcript, ChatMessage } from './types';
-import { SEED_RECORDINGS } from './types';
 
 const K_REC = 'recai.db.recordings';
-const K_SEEDED = 'recai.db.seeded';
 const K_TRANSCRIPTS = 'recai.db.transcripts';
 const K_MESSAGES = 'recai.db.messages';
 
@@ -29,15 +27,8 @@ async function writeArr<T>(key: string, arr: T[]): Promise<void> {
 }
 
 // ── Recordings ──
-export async function initDb(): Promise<void> {
-  try {
-    const seeded = await AsyncStorage.getItem(K_SEEDED);
-    if (!seeded) {
-      await writeArr(K_REC, SEED_RECORDINGS);
-      await AsyncStorage.setItem(K_SEEDED, '1');
-    }
-  } catch {}
-}
+// brak seedu — apka startuje z pustą listą (widok „No recordings.")
+export async function initDb(): Promise<void> {}
 
 export async function loadRecordings(): Promise<Rec[]> {
   const arr = await readArr<Rec>(K_REC);

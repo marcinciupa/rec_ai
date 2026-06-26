@@ -5,7 +5,6 @@
  */
 import * as SQLite from 'expo-sqlite';
 import type { Rec, Transcript, ChatMessage } from './types';
-import { SEED_RECORDINGS } from './types';
 
 const DB_NAME = 'recai.db';
 const DB_VERSION = 1;
@@ -60,10 +59,7 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
       );
       CREATE INDEX IF NOT EXISTS idx_messages_rec ON messages(recording_id);
     `);
-    // seed demo TYLKO przy pierwszym utworzeniu bazy (późniejsze usunięcie wszystkiego NIE wraca)
-    for (const r of SEED_RECORDINGS) {
-      await upsertInto(db, r);
-    }
+    // brak seedu — apka startuje z pustą listą (widok „No recordings.")
     version = 1;
   }
   await db.execAsync(`PRAGMA user_version = ${DB_VERSION}`);
