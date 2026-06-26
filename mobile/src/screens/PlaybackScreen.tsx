@@ -150,6 +150,8 @@ export function usePlaybackScreen({
   onOpenSettings,
   onStartRecording,
   transcription,
+  pendingPlayId,
+  onConsumePending,
 }: {
   store: RecordingsStore;
   mono?: boolean;
@@ -158,6 +160,9 @@ export function usePlaybackScreen({
   onOpenSettings?: () => void;
   onStartRecording?: () => void;
   transcription?: TranscriptionStore;
+  // żądanie z ekranu nagrywania: otwórz PLAYER dla tego nagrania i od razu graj (autostart)
+  pendingPlayId?: string | null;
+  onConsumePending?: () => void;
 }) {
   const { recordings: recs, removeById, insertAt } = store;
   const [rawSel, setSelId] = useState<string>('');
@@ -266,6 +271,27 @@ export function usePlaybackScreen({
       setPlayerState('LOADING');
     }
   };
+  // otwórz PLAYER dla KONKRETNEGO nagrania (po id) + autostart — używane po zapisie z ekranu nagrywania
+  const openPlayerById = (id: string) => {
+    const r = recs.find((x) => x.id === id);
+    setSelId(id);
+    setPos(0);
+    setSpeed(1);
+    setView('PLAYER');
+    if (r?.uri) {
+      setPlayerState('PLAYING');
+      loadAndPlay(r);
+    } else {
+      setPlayerState('LOADING');
+    }
+  };
+  // po nagraniu: ekran nagrywania prosi (przez App) o przeniesienie do playera tego pliku
+  useEffect(() => {
+    if (!pendingPlayId) return;
+    openPlayerById(pendingPlayId);
+    onConsumePending?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPlayId]);
   const backToList = () => {
     if (sel?.uri) {
       try {

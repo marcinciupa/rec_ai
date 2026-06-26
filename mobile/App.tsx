@@ -47,6 +47,8 @@ export default function App() {
     if (mode !== 'SETTINGS') prevModeRef.current = mode;
   }, [mode]);
   const closeSettings = () => setMode(prevModeRef.current);
+  // po zapisaniu nagrania PLAY przenosi do PLAYBACK i otwiera player tego pliku (autostart)
+  const [pendingPlay, setPendingPlay] = useState<string | null>(null);
 
   // Wspólny store nagrań — dzielony przez nagrywanie (zapis) i playback (lista).
   const recStore = useRecordings();
@@ -62,6 +64,10 @@ export default function App() {
     onCycleMode: cycleMode,
     onOpenSettings: () => setMode('SETTINGS'),
     onOpenRecordings: () => setMode('PLAYBACK'),
+    onOpenPlayer: (id) => {
+      setPendingPlay(id);
+      setMode('PLAYBACK');
+    },
     onSave: recStore.add,
     recordings: recStore.recordings,
     transcription,
@@ -74,6 +80,8 @@ export default function App() {
     onOpenSettings: () => setMode('SETTINGS'),
     onStartRecording: () => setMode('RECORDING'),
     transcription,
+    pendingPlayId: pendingPlay,
+    onConsumePending: () => setPendingPlay(null),
   });
   const variant = settings.fullscreen ? 'fullscreen' : 'device';
 

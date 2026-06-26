@@ -11,7 +11,6 @@ import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import { ScreenTopBar, BottomBar, Mode } from './ScreenChrome';
 import { useBlink } from '../theme/BlinkContext';
 import { useAudioCapture } from '../hooks/useAudioCapture';
-import { usePlayer } from '../hooks/usePlayer';
 import type { Rec } from '../hooks/useRecordings';
 import { genericName, nextSeq } from '../hooks/useRecordings';
 import type { TranscriptionStore } from '../hooks/useTranscription';
@@ -134,6 +133,7 @@ export function useRecordingScreen({
   onCycleMode,
   onOpenSettings,
   onOpenRecordings,
+  onOpenPlayer,
   onSave,
   recordings = [],
   transcription,
@@ -144,15 +144,13 @@ export function useRecordingScreen({
   onCycleMode?: () => void;
   onOpenSettings?: () => void;
   onOpenRecordings?: () => void;
+  // PLAY w stanie SAVED: przenieś do playera świeżo zapisanego nagrania (po id) + autostart
+  onOpenPlayer?: (id: string) => void;
   onSave?: (rec: Rec) => void;
   recordings?: Rec[];
   transcription?: TranscriptionStore;
 }) {
   const capture = useAudioCapture();
-  // odtwarzacz do szybkiego podglądu właśnie zapisanego pliku (klawisz PLAY/PAUSE w stanie SAVED)
-  const { player, status: pstatus } = usePlayer();
-  const [savedUri, setSavedUri] = useState<string | undefined>(undefined);
-  const playerLoaded = useRef(false);
   // nazwa pliku, który teraz powstaje: generyczna z dzisiejszej daty + kolejny numer dnia
   const recDate = today();
   const recSeq = nextSeq(recordings, recDate);
@@ -195,52 +193,22 @@ export function useRecordingScreen({
     []
   );
 
-  // SAVED → READY: zatrzymaj i zwolnij podgląd, wyczyść uri
-  const goReady = () => {
-    if (playerLoaded.current) {
-      player.pause();
-      playerLoaded.current = false;
-    }
-    setSavedUri(undefined);
-    setState('READY');
-  };
-  // uzbrój auto-powrót do ready (3 s) — chyba że użytkownik odpali podgląd
+  // SAVED → READY (po oknie 3 s, jeśli nie klikniesz PLAY)
+  const goReady = () => setState('READY');
+  // uzbrój auto-powrót do ready (3 s) — chyba że klikniesz PLAY (przejście do playera)
   const armReturn = () => {
     clearTimeout(timers.current.ret);
     timers.current.ret = setTimeout(goReady, 3000);
   };
-  // PLAY/PAUSE w stanie SAVED — podgląd właśnie zapisanego pliku przez krótkie okno SAVED
-  const togglePlaySaved = () => {
-    if (!savedUri) return;
-    clearTimeout(timers.current.ret); // w trakcie obsługi nie wracaj do ready
-    if (!playerLoaded.current) {
-      player.replace({ uri: savedUri });
-      playerLoaded.current = true;
-      player.play();
-    } else if (pstatus.playing) {
-      player.pause();
-      armReturn(); // pauza → znów odlicz powrót
-    } else {
-      player.play();
-    }
+  // PLAY w oknie SAVED → przenieś do playera tego nagrania (autostart); anuluj auto-powrót
+  const openSavedInPlayer = () => {
+    if (!lastSavedId) return;
+    clearTimeout(timers.current.ret);
+    onOpenPlayer?.(lastSavedId);
   };
-  // koniec odtwarzania → wróć na start i uzbrój powrót do ready
-  useEffect(() => {
-    if (state === 'SAVED' && (pstatus as any).didJustFinish) {
-      player.seekTo(0);
-      player.pause();
-      armReturn();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [(pstatus as any).didJustFinish, state]);
 
   const start = () => {
     clearTimeout(timers.current.ret); // przerwij auto-powrót do ready
-    if (playerLoaded.current) {
-      player.pause(); // zatrzymaj ewentualny podgląd
-      playerLoaded.current = false;
-    }
-    setSavedUri(undefined);
     setAbortedFlash(false);
     setElapsed(0);
     samplesRef.current = []; // nowa obwiednia
@@ -285,7 +253,6 @@ export function useRecordingScreen({
         if (persisted.sizeBytes != null) sizeBytes = persisted.sizeBytes;
       } catch {}
     }
-    setSavedUri(uri); // udostępnij pod klawiszem PLAY/PAUSE w oknie SAVED (już trwały plik)
     const rec: Rec = {
       id,
       uri,
@@ -320,10 +287,10 @@ export function useRecordingScreen({
   const stopActive = { type: 'label' as const, upper: 'STOP', active: true, onPress: stop };
   const stopInactive = { type: 'label' as const, upper: 'STOP', active: false };
   const playInactive = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
-  // w stanie SAVED, gdy jest realny plik (uri): PLAY/PAUSE aktywny → podgląd nagrania
+  // w oknie SAVED: PLAY/PAUSE aktywny → przejście do playera świeżego nagrania (autostart)
   const playSaved =
-    savedUri
-      ? { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: true, onPress: togglePlaySaved }
+    state === 'SAVED' && lastSavedId
+      ? { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: true, onPress: openSavedInPlayer }
       : playInactive;
   // RECORDINGS → lista nagrań; widoczny tylko gdy nie nagrywamy (znika w RECORDING/MUTED/PAUSED)
   const recordingsKey = { label: 'RECORD-\nINGS', onPress: onOpenRecordings };
