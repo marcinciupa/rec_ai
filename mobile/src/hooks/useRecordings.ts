@@ -1,47 +1,89 @@
 /**
- * useRecordings — wspólny store nagrań (lifted do App), dzielony przez RecordingScreen (zapis)
- * i PlaybackScreen (lista/odtwarzanie/usuwanie/transkrypcja).
+ * useRecordings — wspólny store nagrań z TRWAŁOŚCIĄ (SQLite natywnie, AsyncStorage na web).
+ * API niezmienione (add/removeById/insertAt/update), więc ekrany nie wymagają zmian.
+ * UI aktualizuje się natychmiast (stan w pamięci), zapis do bazy leci w tle.
+ * Pliki audio kasowane są LENIWIE (GC przy starcie) → UNDO zachowuje audio w tej samej sesji.
+ *
  * Rec.uri = realny plik (nagrane); brak uri = pozycja demo (mock). lengthSec/sizeBytes — metadane.
  */
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import type { Rec } from '../lib/types';
+import * as db from '../lib/db';
+import { cleanupOrphanFiles } from '../lib/recordingFiles';
 
-export type Rec = {
-  id: string;
-  uri?: string; // realny plik audio (nagrane); brak = demo/mock
-  title?: string; // tytuł od AI (po transkrypcji)
-  date: string; // DD/MM/YY
-  lengthSec: number;
-  sizeBytes?: number; // realny rozmiar pliku (jeśli znany)
-  seq?: number; // numer porządkowy w obrębie dnia (przydzielony przy zapisie; stabilny)
-  samples?: number[]; // obwiednia amplitudy 0..1 (z meteringu nagrania) — do waveformu odtwarzania
-  transcribed: boolean;
-};
+export type { Rec } from '../lib/types';
 
 // generyczna nazwa pliku z daty + numeru: 10/06/26 + 1 → 10_06_26_REC01
 export const genericName = (date: string, n: number) => `${date.replace(/\//g, '_')}_REC${String(n).padStart(2, '0')}`;
 // kolejny numer porządkowy dla daty = liczba nagrań tego dnia + 1
 export const nextSeq = (recordings: Rec[], date: string) => recordings.filter((r) => r.date === date).length + 1;
 
-// dane demonstracyjne (bez uri → mock); realne nagrania dochodzą na górę
-const INITIAL: Rec[] = [
-  { id: 'r1', date: '10/06/26', lengthSec: 23 * 60 + 11, transcribed: false },
-  { id: 'r2', title: 'SKEUMORPHIC UI IDEA', date: '9/06/26', lengthSec: 54 * 60 + 23, transcribed: true },
-  { id: 'r3', title: 'REC_AI DESIGN IDEAS', date: '7/06/26', lengthSec: 12 * 60 + 3, transcribed: true },
-  { id: 'r4', date: '7/06/26', lengthSec: 8 * 60 + 45, transcribed: false },
-];
-
 export function useRecordings() {
-  const [recordings, setRecordings] = useState<Rec[]>(INITIAL);
-  const add = (r: Rec) => setRecordings((prev) => [r, ...prev]); // nowe na górze
-  const removeById = (id: string) => setRecordings((prev) => prev.filter((r) => r.id !== id));
-  const insertAt = (r: Rec, index: number) =>
+  const [recordings, setRecordings] = useState<Rec[]>([]);
+  const maxOrder = useRef(0); // najwyższy sortOrder — nowe nagrania dostają +1 (trafiają na górę)
+  const recsRef = useRef<Rec[]>([]); // bieżąca lista (do odczytu poza updaterem stanu)
+  recsRef.current = recordings;
+  // serializacja zapisów do bazy w KOLEJNOŚCI wywołań — np. delete musi trafić przed późniejszym
+  // upsert z UNDO (withTransactionAsync nie gwarantuje porządku przy współbieżnych zapytaniach)
+  const dbQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueue = (fn: () => Promise<unknown>) => {
+    dbQueue.current = dbQueue.current.then(() => fn().catch(() => {}));
+  };
+
+  // start: wczytaj z bazy, ustaw licznik kolejności, posprzątaj osierocone pliki
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        await db.initDb();
+        const recs = await db.loadRecordings();
+        if (!alive) return;
+        maxOrder.current = recs.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
+        setRecordings(recs);
+        cleanupOrphanFiles(recs.map((r) => r.id)).catch(() => {});
+      } catch {
+        // awaryjnie (np. błąd bazy): pusta lista (widok „No recordings."), bez mocków
+        if (!alive) return;
+        setRecordings([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // nowe nagranie: nadaj kolejność (na górę), zapisz w bazie
+  const add = (r: Rec) => {
+    const rec: Rec = { ...r, sortOrder: ++maxOrder.current };
+    setRecordings((prev) => [rec, ...prev]);
+    enqueue(() => db.upsertRecording(rec));
+  };
+
+  // usuń wiersz z bazy; pliku NIE kasujemy od razu (GC przy starcie) → UNDO zachowuje audio
+  const removeById = (id: string) => {
+    setRecordings((prev) => prev.filter((r) => r.id !== id));
+    enqueue(() => db.deleteRecording(id));
+  };
+
+  // UNDO: wstaw z powrotem na pozycję; zachowany sortOrder → ta sama kolejność po restarcie
+  const insertAt = (r: Rec, index: number) => {
     setRecordings((prev) => {
       const a = prev.slice();
       a.splice(Math.max(0, Math.min(a.length, index)), 0, r);
       return a;
     });
-  const update = (id: string, patch: Partial<Rec>) =>
-    setRecordings((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    enqueue(() => db.upsertRecording(r));
+  };
+
+  // zmiana pól (np. transkrypcja → title/transcribed): policz nowy rec z bieżącej listy i zapisz
+  const update = (id: string, patch: Partial<Rec>) => {
+    const current = recsRef.current.find((r) => r.id === id);
+    if (!current) return;
+    const updated: Rec = { ...current, ...patch };
+    setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    enqueue(() => db.upsertRecording(updated));
+  };
+
   return { recordings, add, removeById, insertAt, update };
 }
 

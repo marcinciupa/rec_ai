@@ -82,6 +82,23 @@ export function hapticKnobReturn(active: boolean) {
   play(active ? [28, 50, 28] : [45]);
 }
 
+/**
+ * Ciągła wibracja — seeker: granica nagrania (początek/koniec) oraz scrub przy zatrzymanym/zpauzowanym
+ * odtwarzaniu. Trwa do `hapticContinuous(false)` (puszczenie seekera). Amplitudy nie kontrolujemy.
+ */
+export function hapticContinuous(on: boolean) {
+  if (!on) {
+    hapticCancel();
+    return;
+  }
+  if (Platform.OS === 'web') {
+    const n: any = typeof navigator !== 'undefined' ? navigator : null;
+    n?.vibrate?.(60000); // długi buzz; przerywany przez hapticCancel na puszczenie
+  } else {
+    Vibration.vibrate([0, 1000], true); // powtarzany wzorzec bez przerw = ciągła wibracja do Vibration.cancel()
+  }
+}
+
 /** [HOLD]: bardzo krótkie impulsy, moc stopniowo rośnie 0→50% do końca przytrzymania. */
 export function hapticHold(durationMs: number) {
   const interval = 70; // bardzo krótkie odstępy między impulsami

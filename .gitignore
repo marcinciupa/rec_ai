@@ -18,3 +18,11 @@ mobile/.env
 .DS_Store
 Thumbs.db
 *:Zone.Identifier
+
+# Artefakty debugowania (logi, zrzuty ekranu emulatora/web, eksporty QA) — nie wersjonujemy
+*.log
+*.log.err
+/*.png
+mobile/*.png
+.playwright-mcp/
+mobile/.qa-web-export/

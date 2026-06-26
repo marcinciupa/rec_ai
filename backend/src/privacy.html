@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Polityka Prywatności — REC_AI</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { max-width: 760px; margin: 0 auto; padding: 24px 18px 64px; font: 16px/1.6 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+  h1 { font-size: 1.6rem; margin-bottom: .2em; }
+  h2 { font-size: 1.15rem; margin-top: 1.8em; }
+  .updated { color: #888; font-size: .9rem; }
+  code { background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 4px; }
+  ul { padding-left: 1.2em; }
+  footer { margin-top: 3em; color: #888; font-size: .9rem; }
+</style>
+</head>
+<body>
+  <h1>Polityka Prywatności — REC_AI</h1>
+  <p class="updated">Ostatnia aktualizacja: 23 czerwca 2026</p>
+
+  <p>Niniejsza Polityka opisuje, jak aplikacja <strong>REC_AI</strong> („Aplikacja") przetwarza dane podczas korzystania
+  z funkcji nagrywania notatek głosowych, ich transkrypcji oraz czatu AI o notatce.</p>
+
+  <p><strong>Administrator:</strong> [UZUPEŁNIJ: imię i nazwisko / nazwa]<br />
+  <strong>Kontakt:</strong> [UZUPEŁNIJ: adres e-mail]</p>
+
+  <h2>1. Jakie dane przetwarzamy</h2>
+  <ul>
+    <li><strong>Nagrania audio</strong> — tworzone, gdy nagrywasz notatkę. Zapisywane <strong>lokalnie na Twoim urządzeniu</strong>.</li>
+    <li><strong>Transkrypcje i wiadomości czatu</strong> — tekst z transkrypcji nagrań oraz Twoje pytania i odpowiedzi AI. Zapisywane <strong>lokalnie na urządzeniu</strong>.</li>
+    <li><strong>Anonimowy identyfikator urządzenia</strong> — losowy identyfikator generowany w Aplikacji (nie powiązany z Twoją tożsamością, kontem ani numerem telefonu). Służy wyłącznie ograniczaniu nadużyć i kontroli kosztów po stronie serwera.</li>
+    <li><strong>Dane techniczne</strong> — podstawowe metadane żądań (czas, rozmiar pliku, kod odpowiedzi). <strong>Nie zawierają treści</strong> nagrań.</li>
+  </ul>
+  <p>Aplikacja <strong>nie wymaga konta</strong> i <strong>nie zbiera</strong> danych takich jak imię, e-mail, lokalizacja, kontakty czy identyfikatory reklamowe.</p>
+
+  <h2>2. Po co przetwarzamy dane</h2>
+  <ul>
+    <li>Aby <strong>przetworzyć nagranie na tekst</strong> (transkrypcja).</li>
+    <li>Aby <strong>odpowiadać na pytania o notatkę</strong> (czat AI).</li>
+    <li>Aby <strong>zapewnić działanie i bezpieczeństwo</strong> usługi (ograniczanie nadużyć).</li>
+  </ul>
+
+  <h2>3. Komu przekazujemy dane (podmioty przetwarzające)</h2>
+  <p>Aby zrealizować transkrypcję i czat, treść jest wysyłana z Aplikacji do naszego serwera pośredniczącego, a stamtąd do dostawców AI:</p>
+  <ul>
+    <li><strong>deAPI</strong> — transkrypcja audio (model Whisper). Wysyłany jest plik audio nagrania.</li>
+    <li><strong>OpenRouter</strong> (i podłączony model językowy, np. Google Gemini) — czat o notatce. Wysyłany jest transkrypt i Twoje pytanie.</li>
+    <li><strong>Railway</strong> — hosting serwera pośredniczącego.</li>
+  </ul>
+  <p>Nasz serwer pośredniczący <strong>nie przechowuje</strong> Twoich nagrań ani transkryptów — przekazuje je wyłącznie w celu realizacji żądania. Przetwarzanie przez powyższych dostawców podlega ich własnym politykom prywatności.</p>
+
+  <h2>4. Gdzie i jak długo przechowujemy dane</h2>
+  <ul>
+    <li><strong>Na urządzeniu:</strong> nagrania, transkrypcje i wiadomości czatu są przechowywane lokalnie do momentu ich <strong>usunięcia przez Ciebie</strong> w Aplikacji lub <strong>odinstalowania</strong> Aplikacji.</li>
+    <li><strong>Na serwerze:</strong> treść nie jest trwale przechowywana (przetwarzanie przejściowe na czas realizacji żądania). Metadane techniczne mogą być przechowywane krótkoterminowo w logach.</li>
+  </ul>
+
+  <h2>5. Uprawnienia</h2>
+  <ul>
+    <li><strong>Mikrofon</strong> — wymagany do nagrywania notatek głosowych. Nagrywanie następuje wyłącznie po jego uruchomieniu przez Ciebie.</li>
+  </ul>
+
+  <h2>6. Twoje prawa i kontrola</h2>
+  <ul>
+    <li>Możesz w każdej chwili <strong>usunąć dowolne nagranie</strong> w Aplikacji.</li>
+    <li><strong>Odinstalowanie</strong> Aplikacji usuwa wszystkie dane przechowywane lokalnie na urządzeniu.</li>
+    <li>W sprawach dotyczących danych skontaktuj się pod adresem podanym wyżej.</li>
+  </ul>
+
+  <h2>7. Bezpieczeństwo</h2>
+  <p>Połączenia z serwerem są szyfrowane (HTTPS). Klucze do usług AI są przechowywane po stronie serwera i nie są zawarte w Aplikacji.</p>
+
+  <h2>8. Dzieci</h2>
+  <p>Aplikacja nie jest skierowana do dzieci poniżej 13. roku życia i nie zbiera świadomie ich danych.</p>
+
+  <h2>9. Zmiany Polityki</h2>
+  <p>Możemy aktualizować niniejszą Politykę. Zmiany publikujemy pod tym samym adresem wraz z datą aktualizacji.</p>
+
+  <footer>
+    REC_AI · [UZUPEŁNIJ: nazwa] · [UZUPEŁNIJ: adres e-mail]
+  </footer>
+</body>
+</html>
