@@ -221,6 +221,7 @@ export function usePlaybackScreen({
   const [loadPct, setLoadPct] = useState(0);
   const [speed, setSpeed] = useState(1); // 1× / 2×
   const [transcript, setTranscript] = useState<Transcript | null>(null); // treść transkryptu w playerze
+  const [scrubDisplay, setScrubDisplay] = useState<number | null>(null); // pozycja w trakcie przewijania (płynny waveform; null = czytaj z odtwarzacza)
   const lastDeleted = useRef<{ rec: Rec; index: number; name: string } | null>(null);
   const timers = useRef<{ ret?: any }>({});
   // scrub realnego pliku: pauza na czas przewijania, lokalna pozycja, wznowienie po puszczeniu
@@ -512,7 +513,8 @@ export function usePlaybackScreen({
     const loading = realMode ? false : playerState === 'LOADING';
     const playing = realMode ? pstatus.playing : playerState === 'PLAYING';
     const started = realMode ? pstatus.playing || pstatus.currentTime > 0 : playerState === 'PLAYING' || playerState === 'PAUSED';
-    const uiPos = realMode ? pstatus.currentTime : pos;
+    // w trakcie przewijania pokazuj lokalną pozycję scrubu (płynnie), inaczej realną z odtwarzacza
+    const uiPos = scrubDisplay != null ? scrubDisplay : realMode ? pstatus.currentTime : pos;
     const uiLen = realMode ? pstatus.duration || sel?.lengthSec || 0 : len;
     const deleteKey = { label: 'DELETE', supporting: '[HOLD]', variant: 'risk' as const, onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 };
     const recordKey = { type: 'record' as const, onPress: onStartRecording };
@@ -594,6 +596,7 @@ export function usePlaybackScreen({
         if (level > scrubLevel.current && level >= 1) hapticKnob(level / 4);
       }
       scrubLevel.current = level;
+      setScrubDisplay(scrubPos.current); // waveform płynnie podąża za przewijaniem
     };
     const onScrubEnd = () => {
       if (!scrubbing.current) return;
@@ -602,22 +605,14 @@ export function usePlaybackScreen({
         hapticContinuous(false);
         continuousOn.current = false;
       }
-      // decyzja wg KOŃCOWEJ pozycji (nie „czy dotknięto" krańca po drodze)
+      setScrubDisplay(null); // wróć do pozycji ze statusu odtwarzacza
+      // decyzja po puszczeniu wg KOŃCOWEJ pozycji + czy grało przed przewinięciem:
+      //  • koniec → reset na 0, nie graj
+      //  • początek, ale wcześniej NIE grało (np. siedzimy na 0 i ruszamy w lewo) → zostań na 0, nie graj
+      //  • wszędzie indziej, albo początek gdy GRAŁO → graj od pozycji, do której przewinięto
       const atStart = scrubPos.current <= 0;
       const atEnd = total > 0 && scrubPos.current >= total;
-      if (atStart) {
-        // puszczono na początku → START odtwarzania
-        if (realMode) {
-          try {
-            player.seekTo(0);
-            player.play();
-          } catch {}
-        } else {
-          setPos(0);
-          setPlayerState('PLAYING');
-        }
-      } else if (atEnd) {
-        // puszczono na końcu → wróć na początek, ale NIE odtwarzaj
+      if (atEnd || (atStart && !wasPlaying.current)) {
         if (realMode) {
           try {
             player.seekTo(0);
@@ -628,15 +623,14 @@ export function usePlaybackScreen({
           setPlayerState('PAUSED');
         }
       } else {
-        // zwykłe puszczenie w środku → wznów to co było, z bieżącej pozycji
         if (realMode) {
           try {
             player.seekTo(scrubPos.current);
-            if (wasPlaying.current) player.play();
+            player.play();
           } catch {}
         } else {
           setPos(scrubPos.current);
-          setPlayerState(wasPlaying.current ? 'PLAYING' : 'PAUSED');
+          setPlayerState('PLAYING');
         }
       }
     };
