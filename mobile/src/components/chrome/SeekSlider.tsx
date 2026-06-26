@@ -165,6 +165,7 @@ function Knob({
         // scrub: dopóki knob wychylony (trzymany), wywołuj onScrub(rate) co 100 ms
         if (scrubRef.current) {
           clearInterval(scrubTimer.current);
+          scrubRef.current(ratioRef.current); // OD RAZU wejdź w przewijanie (wycisz audio) — bez 100 ms grania
           scrubTimer.current = setInterval(() => scrubRef.current?.(ratioRef.current), 100);
         }
       },

@@ -30,9 +30,10 @@ const dayOrdinal = (list: Rec[], r: Rec) => list.filter((x) => x.date === r.date
 const displayName = (r: Rec, list: Rec[]) =>
   r.transcribed && r.title ? r.title : genericName(r.date, r.seq ?? dayOrdinal(list, r));
 
-// Seeker (shuttle): wychylenie knoba kwantowane do biegów przewijania. Środek (level 0) = brak scrubu =
-// normalne granie 1×. Dalej wg spec: 25%→2.5×, 50%→5×, 75%→7.5×, 100%→10× (krotność realtime).
-const SCRUB_STEPS = [0, 2.5, 5, 7.5, 10]; // index = bieg (level)
+// Seeker = PRZEWIJANIE (nie tempo audio): wychylenie ustawia prędkość przesuwania playheada
+// przez nagranie (audio milknie na czas przewijania). Środek (level 0) = brak przewijania = normalne
+// granie 1×. Dalej wg spec: 25%→2.5×, 50%→5×, 75%→7.5×, 100%→10× (krotność realtime, przód/tył).
+const SCRUB_STEPS = [0, 2.5, 5, 7.5, 10]; // index = bieg (level) prędkości przewijania
 const SCRUB_TICK_S = 0.1; // knob woła onScrub co ~100 ms
 const quantizeScrub = (ratio: number) => {
   const level = Math.round(Math.min(1, Math.abs(ratio)) * 4); // 0..4
@@ -228,8 +229,6 @@ export function usePlaybackScreen({
   const scrubPos = useRef(0);
   const scrubLevel = useRef(0); // ostatni bieg (haptyka „mocniej na wyższym biegu")
   const continuousOn = useRef(false); // trwa ciągła wibracja (granica / zatrzymane odtwarzanie)
-  const reachedStart = useRef(false); // w tej sesji scrubu dobiliśmy do początku
-  const reachedEnd = useRef(false); // …lub do końca
 
   const idx = Math.max(0, recs.findIndex((r) => r.id === selId));
   const sel: Rec | undefined = recs[idx];
@@ -552,8 +551,6 @@ export function usePlaybackScreen({
       // start sesji scrubu: zapamiętaj stan, zatrzymaj realne odtwarzanie
       if (!scrubbing.current) {
         scrubbing.current = true;
-        reachedStart.current = false;
-        reachedEnd.current = false;
         scrubLevel.current = 0;
         if (realMode) {
           wasPlaying.current = pstatus.playing;
@@ -571,8 +568,6 @@ export function usePlaybackScreen({
         let np = scrubPos.current + dir * speed * SCRUB_TICK_S;
         np = Math.max(0, Math.min(total, np));
         scrubPos.current = np;
-        if (np <= 0) reachedStart.current = true;
-        if (np >= total) reachedEnd.current = true;
         if (realMode) {
           try {
             player.seekTo(np);
@@ -607,8 +602,11 @@ export function usePlaybackScreen({
         hapticContinuous(false);
         continuousOn.current = false;
       }
-      if (reachedStart.current) {
-        // przewinięto na początek → po puszczeniu START odtwarzania
+      // decyzja wg KOŃCOWEJ pozycji (nie „czy dotknięto" krańca po drodze)
+      const atStart = scrubPos.current <= 0;
+      const atEnd = total > 0 && scrubPos.current >= total;
+      if (atStart) {
+        // puszczono na początku → START odtwarzania
         if (realMode) {
           try {
             player.seekTo(0);
@@ -618,8 +616,8 @@ export function usePlaybackScreen({
           setPos(0);
           setPlayerState('PLAYING');
         }
-      } else if (reachedEnd.current) {
-        // przewinięto na koniec → wróć na początek, ale NIE odtwarzaj
+      } else if (atEnd) {
+        // puszczono na końcu → wróć na początek, ale NIE odtwarzaj
         if (realMode) {
           try {
             player.seekTo(0);
