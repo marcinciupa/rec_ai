@@ -144,9 +144,16 @@ function Knob({
     fired.current = false;
     clearInterval(scrubTimer.current); // zatrzymaj scrub
     ratioRef.current = 0;
-    if (scrubRef.current) scrubEndRef.current?.(); // koniec scrubu (np. wznów odtwarzanie)
-    // klik na powrót do 0 ZAWSZE (też nieaktywny knob): aktywny=podwójny tick, nieaktywny=pojedynczy (jak klawiatura)
-    hapticKnobReturn(!!(adjustRef.current || scrubRef.current));
+    if (scrubRef.current) {
+      scrubEndRef.current?.(); // koniec scrubu (wznowienie + zgaszenie ciągłej wibracji robi ekran)
+      // knob fizycznie sprężynuje na środek; krótka wibracja DOPIERO gdy dotrze do punktu 0
+      Animated.spring(tx, { toValue: 0, useNativeDriver: false }).start(({ finished }) => {
+        if (finished) hapticShort();
+      });
+      return;
+    }
+    // klik na powrót do 0 (też nieaktywny knob): aktywny=podwójny tick, nieaktywny=pojedynczy (jak klawiatura)
+    hapticKnobReturn(!!adjustRef.current);
     Animated.spring(tx, { toValue: 0, useNativeDriver: false }).start();
   };
 
@@ -168,8 +175,8 @@ function Knob({
         ratioRef.current = max > 0 ? clamped / max : 0;
         const isScrub = !!scrubRef.current;
         const isDiscrete = discreteRef.current;
-        // haptyka: scrub i tryb ciągły → siła ~ wychylenie, throttlowana
-        if ((isScrub || !isDiscrete) && (adjustRef.current || scrubRef.current) && max > 0) {
+        // haptyka knoba tylko dla starego trybu ciągłego-adjust; scrub (playback) ma własną haptykę w ekranie
+        if (!isScrub && !isDiscrete && adjustRef.current && max > 0) {
           const now = Date.now();
           if (now - lastHaptic.current > 45) {
             lastHaptic.current = now;

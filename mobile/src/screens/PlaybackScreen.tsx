@@ -9,6 +9,7 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { usePlayer } from '../hooks/usePlayer';
+import { hapticKnob, hapticContinuous } from '../lib/haptics';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import type { SliderConfig } from '../components/chrome/SeekSlider';
@@ -27,8 +28,14 @@ const dayOrdinal = (list: Rec[], r: Rec) => list.filter((x) => x.date === r.date
 const displayName = (r: Rec, list: Rec[]) =>
   r.transcribed && r.title ? r.title : genericName(r.date, r.seq ?? dayOrdinal(list, r));
 
-// scrub: setInterval w knobie ~100ms (10×/s); SCRUB_STEP*10 = maks. krotność prędkości (≈10×)
-const SCRUB_STEP = 1.0;
+// Seeker (shuttle): wychylenie knoba kwantowane do biegów przewijania. Środek (level 0) = brak scrubu =
+// normalne granie 1×. Dalej wg spec: 25%→2.5×, 50%→5×, 75%→7.5×, 100%→10× (krotność realtime).
+const SCRUB_STEPS = [0, 2.5, 5, 7.5, 10]; // index = bieg (level)
+const SCRUB_TICK_S = 0.1; // knob woła onScrub co ~100 ms
+const quantizeScrub = (ratio: number) => {
+  const level = Math.round(Math.min(1, Math.abs(ratio)) * 4); // 0..4
+  return { level, speed: SCRUB_STEPS[level], dir: ratio < 0 ? -1 : 1 };
+};
 
 // rozmiar pliku: realny (sizeBytes) lub mock z długości (≈72 kbps → 12.6MB dla 23:11)
 const MB_PER_SEC = 0.00906;
@@ -168,6 +175,10 @@ export function usePlaybackScreen({
   const scrubbing = useRef(false);
   const wasPlaying = useRef(false);
   const scrubPos = useRef(0);
+  const scrubLevel = useRef(0); // ostatni bieg (haptyka „mocniej na wyższym biegu")
+  const continuousOn = useRef(false); // trwa ciągła wibracja (granica / zatrzymane odtwarzanie)
+  const reachedStart = useRef(false); // w tej sesji scrubu dobiliśmy do początku
+  const reachedEnd = useRef(false); // …lub do końca
 
   const idx = Math.max(0, recs.findIndex((r) => r.id === selId));
   const sel: Rec | undefined = recs[idx];
@@ -444,32 +455,101 @@ export function usePlaybackScreen({
       };
     }
 
-    // scrub realnego pliku: pauzujemy player, przewijamy po lokalnej pozycji (bez szarpania audio), wznawiamy po puszczeniu
-    const onScrub = (rate: number) => {
-      if (realMode) {
-        if (!scrubbing.current) {
-          scrubbing.current = true;
+    // Seeker shuttle: knob woła onScrub(ratio -1..1) co ~100 ms. Kwantujemy do biegu prędkości,
+    // przesuwamy playhead (przód=prawo / tył=lewo), pauzujemy audio na czas przewijania.
+    const total = uiLen;
+    const onScrub = (ratio: number) => {
+      const { level, speed, dir } = quantizeScrub(ratio);
+      // start sesji scrubu: zapamiętaj stan, zatrzymaj realne odtwarzanie
+      if (!scrubbing.current) {
+        scrubbing.current = true;
+        reachedStart.current = false;
+        reachedEnd.current = false;
+        scrubLevel.current = 0;
+        if (realMode) {
           wasPlaying.current = pstatus.playing;
           scrubPos.current = pstatus.currentTime;
           try {
             player.pause();
           } catch {}
+        } else {
+          wasPlaying.current = playerState === 'PLAYING';
+          scrubPos.current = pos;
         }
-        scrubPos.current = Math.max(0, Math.min(uiLen, scrubPos.current + rate * SCRUB_STEP));
-        try {
-          player.seekTo(scrubPos.current);
-        } catch {}
-      } else {
-        setPos((p) => Math.max(0, Math.min(len, p + rate * SCRUB_STEP)));
       }
+      // przesuwaj playhead tylko poza martwą strefą środka (level ≥ 1); level 0 = trzymanie pozycji (1×)
+      if (level >= 1 && total > 0) {
+        let np = scrubPos.current + dir * speed * SCRUB_TICK_S;
+        np = Math.max(0, Math.min(total, np));
+        scrubPos.current = np;
+        if (np <= 0) reachedStart.current = true;
+        if (np >= total) reachedEnd.current = true;
+        if (realMode) {
+          try {
+            player.seekTo(np);
+          } catch {}
+        } else {
+          setPos(np);
+        }
+      }
+      // ── haptyka ──
+      const atBoundary = total > 0 && (scrubPos.current <= 0 || scrubPos.current >= total);
+      // ciągła wibracja: na granicy nagrania ORAZ gdy odtwarzanie było zatrzymane/zpauzowane
+      const wantContinuous = atBoundary || !wasPlaying.current;
+      if (wantContinuous) {
+        if (!continuousOn.current) {
+          hapticContinuous(true);
+          continuousOn.current = true;
+        }
+      } else {
+        if (continuousOn.current) {
+          hapticContinuous(false);
+          continuousOn.current = false;
+        }
+        // mocniejszy impuls na każdym wyższym biegu (level/4 = 0.25…1.0)
+        if (level > scrubLevel.current && level >= 1) hapticKnob(level / 4);
+      }
+      scrubLevel.current = level;
     };
     const onScrubEnd = () => {
-      if (scrubbing.current) {
-        scrubbing.current = false;
-        if (wasPlaying.current) {
+      if (!scrubbing.current) return;
+      scrubbing.current = false;
+      if (continuousOn.current) {
+        hapticContinuous(false);
+        continuousOn.current = false;
+      }
+      if (reachedStart.current) {
+        // przewinięto na początek → po puszczeniu START odtwarzania
+        if (realMode) {
           try {
+            player.seekTo(0);
             player.play();
           } catch {}
+        } else {
+          setPos(0);
+          setPlayerState('PLAYING');
+        }
+      } else if (reachedEnd.current) {
+        // przewinięto na koniec → wróć na początek, ale NIE odtwarzaj
+        if (realMode) {
+          try {
+            player.seekTo(0);
+            player.pause();
+          } catch {}
+        } else {
+          setPos(0);
+          setPlayerState('PAUSED');
+        }
+      } else {
+        // zwykłe puszczenie w środku → wznów to co było, z bieżącej pozycji
+        if (realMode) {
+          try {
+            player.seekTo(scrubPos.current);
+            if (wasPlaying.current) player.play();
+          } catch {}
+        } else {
+          setPos(scrubPos.current);
+          setPlayerState(wasPlaying.current ? 'PLAYING' : 'PAUSED');
         }
       }
     };
