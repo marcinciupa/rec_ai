@@ -228,6 +228,7 @@ export function usePlaybackScreen({
   const scrubbing = useRef(false);
   const wasPlaying = useRef(false);
   const scrubPos = useRef(0);
+  const scrubStartPos = useRef(0); // pozycja na starcie przewijania (czy zaczęliśmy na 0)
   const scrubLevel = useRef(0); // ostatni bieg (haptyka „mocniej na wyższym biegu")
   const continuousOn = useRef(false); // trwa ciągła wibracja (granica / zatrzymane odtwarzanie)
 
@@ -564,6 +565,7 @@ export function usePlaybackScreen({
           wasPlaying.current = playerState === 'PLAYING';
           scrubPos.current = pos;
         }
+        scrubStartPos.current = scrubPos.current; // zapamiętaj punkt startu (czy zaczęliśmy na 0)
       }
       // przesuwaj playhead tylko poza martwą strefą środka (level ≥ 1); level 0 = trzymanie pozycji (1×)
       if (level >= 1 && total > 0) {
@@ -606,13 +608,14 @@ export function usePlaybackScreen({
         continuousOn.current = false;
       }
       setScrubDisplay(null); // wróć do pozycji ze statusu odtwarzacza
-      // decyzja po puszczeniu wg KOŃCOWEJ pozycji + czy grało przed przewinięciem:
+      // decyzja po puszczeniu — rozstrzyga PUNKT STARTU przewijania (nie czy grało):
       //  • koniec → reset na 0, nie graj
-      //  • początek, ale wcześniej NIE grało (np. siedzimy na 0 i ruszamy w lewo) → zostań na 0, nie graj
-      //  • wszędzie indziej, albo początek gdy GRAŁO → graj od pozycji, do której przewinięto
+      //  • zaczęliśmy na 0 i nadal jesteśmy na 0 (ruch w lewo z początku, donikąd) → zostań na 0, nie graj
+      //  • z każdego innego punktu (też dojazd do 0 z dalszego miejsca) → graj od pozycji przewinięcia
       const atStart = scrubPos.current <= 0;
       const atEnd = total > 0 && scrubPos.current >= total;
-      if (atEnd || (atStart && !wasPlaying.current)) {
+      const startedAtZero = scrubStartPos.current <= 0;
+      if (atEnd || (atStart && startedAtZero)) {
         if (realMode) {
           try {
             player.seekTo(0);
