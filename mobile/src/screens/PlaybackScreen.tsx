@@ -7,9 +7,11 @@
  * Pliki: z transkrypcją = tytuł (AI) + aktywna ikona AI; bez = generyczna nazwa z daty + wygaszona ikona.
  */
 import { ReactNode, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, ScrollView } from 'react-native';
 import { usePlayer } from '../hooks/usePlayer';
 import { hapticKnob, hapticContinuous } from '../lib/haptics';
+import { getTranscript } from '../lib/db';
+import type { Transcript } from '../lib/types';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import type { SliderConfig } from '../components/chrome/SeekSlider';
@@ -67,6 +69,49 @@ function PlayWaveform({ ratio, dim, samples }: { ratio: number; dim?: boolean; s
         );
       })}
     </View>
+  );
+}
+
+// Transkrypt w playerze (Figma 161:12290): tekst Mono/Body; wypowiedziana część jasna (phosphor),
+// reszta wygaszona — analogicznie do waveformu (zagrane = jasne). Auto-scroll podąża za odtwarzaniem.
+function TranscriptView({ transcript, ratio, posSec }: { transcript: Transcript; ratio: number; posSec: number }) {
+  const segs = transcript.segments;
+  let played = '';
+  let rest = '';
+  if (segs && segs.length) {
+    // segmenty z czasami: wypowiedziane = te, których start już minął
+    const parts = segs.map((s) => s.text.trim());
+    const cut = segs.findIndex((s) => (s.start ?? Infinity) > posSec);
+    const k = cut === -1 ? segs.length : cut;
+    played = parts.slice(0, k).join(' ');
+    rest = (k > 0 && k < parts.length ? ' ' : '') + parts.slice(k).join(' ');
+  } else {
+    // brak czasów: podział proporcjonalny po znakach (ratio = pozycja/długość)
+    const text = transcript.text ?? '';
+    const at = Math.max(0, Math.min(text.length, Math.round(text.length * ratio)));
+    played = text.slice(0, at);
+    rest = text.slice(at);
+  }
+  const scrollRef = useRef<ScrollView>(null);
+  const sizes = useRef({ content: 0, view: 0 });
+  const pct = Math.round(ratio * 100); // przewijaj skokowo co ~1% (bez janku przy każdym ticku pozycji)
+  useEffect(() => {
+    const max = Math.max(0, sizes.current.content - sizes.current.view);
+    scrollRef.current?.scrollTo({ y: max * (pct / 100), animated: true });
+  }, [pct]);
+  return (
+    <ScrollView
+      ref={scrollRef}
+      style={{ flex: 1, alignSelf: 'stretch' }}
+      onLayout={(e) => { sizes.current.view = e.nativeEvent.layout.height; }}
+      onContentSizeChange={(_w, h) => { sizes.current.content = h; }}
+      showsVerticalScrollIndicator={false}
+    >
+      <Text style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, lineHeight: Math.round(font.monoBody.size * 1.5) }}>
+        <Text style={{ color: screen.olive.primary }}>{played}</Text>
+        <Text style={{ color: screen.olive.inactive }}>{rest}</Text>
+      </Text>
+    </ScrollView>
   );
 }
 
@@ -174,6 +219,7 @@ export function usePlaybackScreen({
   const [pos, setPos] = useState(0); // sekundy w bieżącym nagraniu
   const [loadPct, setLoadPct] = useState(0);
   const [speed, setSpeed] = useState(1); // 1× / 2×
+  const [transcript, setTranscript] = useState<Transcript | null>(null); // treść transkryptu w playerze
   const lastDeleted = useRef<{ rec: Rec; index: number; name: string } | null>(null);
   const timers = useRef<{ ret?: any }>({});
   // scrub realnego pliku: pauza na czas przewijania, lokalna pozycja, wznowienie po puszczeniu
@@ -237,6 +283,23 @@ export function usePlaybackScreen({
     },
     []
   );
+
+  // ── PLAYER: wczytaj transkrypt zaznaczonego nagrania (gdy transcribed) → wariant z tekstem ──
+  useEffect(() => {
+    let alive = true;
+    if (view === 'PLAYER' && sel?.transcribed && sel?.id) {
+      getTranscript(sel.id)
+        .then((t) => {
+          if (alive) setTranscript(t);
+        })
+        .catch(() => {});
+    } else {
+      setTranscript(null);
+    }
+    return () => {
+      alive = false;
+    };
+  }, [view, sel?.id, sel?.transcribed]);
 
   // ── wybór na liście ──
   const selectRec = (id: string) => {
@@ -586,12 +649,20 @@ export function usePlaybackScreen({
     // dolny wiersz info: nazwa pliku + zaokrąglony rozmiar (lewo)
     const nameSize = sel ? `${displayName(sel, recs)} (${fileSize(sel)})` : '';
     const capStyle = { fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary } as const;
+    // nagranie transkrybowane → zamiast waveformu pokaż tekst transkryptu (Figma 161:12290)
+    const showTranscript = !loading && !!sel?.transcribed && !!transcript?.text;
+    // nagłówek AI: w trakcie/po błędzie z managera (ai), inaczej dla transkrybowanego „AI TRANSCRIBED WITH DEAPI"
+    const playerAi: [string, string] | undefined = ai ?? (sel?.transcribed ? ['AI TRANSCRIBED', 'WITH DEAPI'] : undefined);
 
     const content = (
       <>
-        <ScreenTopBar mode={mode} onCycleMode={undefined} ai={ai} labelActive={playing} />
-        <View style={{ flex: 1, alignSelf: 'stretch', justifyContent: 'center', gap: 24, paddingHorizontal: 16 }}>
-          <PlayWaveform ratio={uiLen > 0 ? uiPos / uiLen : 0} dim={loading} samples={sel?.samples} />
+        <ScreenTopBar mode={mode} onCycleMode={undefined} ai={playerAi} labelActive={playing} />
+        <View style={{ flex: 1, alignSelf: 'stretch', justifyContent: showTranscript ? 'flex-start' : 'center', gap: 24, paddingHorizontal: 16, paddingTop: showTranscript ? 8 : 0 }}>
+          {showTranscript ? (
+            <TranscriptView transcript={transcript!} ratio={uiLen > 0 ? uiPos / uiLen : 0} posSec={uiPos} />
+          ) : (
+            <PlayWaveform ratio={uiLen > 0 ? uiPos / uiLen : 0} dim={loading} samples={sel?.samples} />
+          )}
           <View style={{ alignSelf: 'stretch', gap: 8 }}>
             {loading ? (
               <>
@@ -625,6 +696,29 @@ export function usePlaybackScreen({
       </>
     );
     return { content, keyboard, slider, goBack };
+  }
+
+  // ════════════ WIDOK: LIST — pusto ════════════
+  // brak nagrań → prosty komunikat „No recordings." (DELETE/PLAY nieaktywne, tylko SETTINGS)
+  if (recs.length === 0) {
+    const keyboard: KeyboardConfig = {
+      screen: [{ label: '' }, { label: 'SETTINGS', onPress: onOpenSettings }, { label: '' }],
+      metal: [
+        { type: 'label', upper: 'STOP', active: false },
+        { type: 'record', onPress: onStartRecording },
+        { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
+      ],
+    };
+    const content = (
+      <>
+        <ScreenTopBar mode={mode} onCycleMode={onCycleMode} ai={undefined} labelActive={false} />
+        <View style={{ flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontFamily: font.timer.family, fontSize: 22, color: screen.olive.inactive }}>No recordings.</Text>
+        </View>
+        <BottomBar active={false} mono={mono} muted={false} />
+      </>
+    );
+    return { content, keyboard };
   }
 
   // ════════════ WIDOK: LIST ════════════
