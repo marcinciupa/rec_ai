@@ -7,7 +7,10 @@ import * as SQLite from 'expo-sqlite';
 import type { Rec, Transcript, ChatMessage } from './types';
 
 const DB_NAME = 'recai.db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
+
+// stare nagrania demo (seed z wcześniejszych wersji) — jednorazowo czyszczone w migracji v2
+const DEMO_IDS = ['r1', 'r2', 'r3', 'r4'];
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -61,6 +64,14 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
     `);
     // brak seedu — apka startuje z pustą listą (widok „No recordings.")
     version = 1;
+  }
+  if (version < 2) {
+    // jednorazowo: usuń stare nagrania demo (seed r1–r4), które mogły zostać z wcześniejszych wersji
+    const ph = DEMO_IDS.map(() => '?').join(',');
+    await db.runAsync(`DELETE FROM recordings WHERE id IN (${ph})`, ...DEMO_IDS);
+    await db.runAsync(`DELETE FROM transcripts WHERE recording_id IN (${ph})`, ...DEMO_IDS);
+    await db.runAsync(`DELETE FROM messages WHERE recording_id IN (${ph})`, ...DEMO_IDS);
+    version = 2;
   }
   await db.execAsync(`PRAGMA user_version = ${DB_VERSION}`);
 }

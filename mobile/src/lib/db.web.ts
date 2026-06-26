@@ -8,6 +8,8 @@ import type { Rec, Transcript, ChatMessage } from './types';
 const K_REC = 'recai.db.recordings';
 const K_TRANSCRIPTS = 'recai.db.transcripts';
 const K_MESSAGES = 'recai.db.messages';
+const K_PURGED = 'recai.db.demo_purged'; // flaga jednorazowego czyszczenia starych dem
+const DEMO_IDS = ['r1', 'r2', 'r3', 'r4']; // stare nagrania demo (seed z wcześniejszych wersji)
 
 async function readArr<T>(key: string): Promise<T[]> {
   try {
@@ -27,8 +29,16 @@ async function writeArr<T>(key: string, arr: T[]): Promise<void> {
 }
 
 // ── Recordings ──
-// brak seedu — apka startuje z pustą listą (widok „No recordings.")
-export async function initDb(): Promise<void> {}
+// brak seedu; jednorazowo czyścimy stare nagrania demo zapisane przez wcześniejsze wersje
+export async function initDb(): Promise<void> {
+  try {
+    if (await AsyncStorage.getItem(K_PURGED)) return;
+    await writeArr(K_REC, (await readArr<Rec>(K_REC)).filter((r) => !DEMO_IDS.includes(r.id)));
+    await writeArr(K_TRANSCRIPTS, (await readArr<Transcript>(K_TRANSCRIPTS)).filter((t) => !DEMO_IDS.includes(t.recordingId)));
+    await writeArr(K_MESSAGES, (await readArr<ChatMessage>(K_MESSAGES)).filter((m) => !DEMO_IDS.includes(m.recordingId)));
+    await AsyncStorage.setItem(K_PURGED, '1');
+  } catch {}
+}
 
 export async function loadRecordings(): Promise<Rec[]> {
   const arr = await readArr<Rec>(K_REC);
