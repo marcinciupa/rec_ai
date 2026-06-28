@@ -1,9 +1,11 @@
 /**
  * ChatView — czat o notatce (pod-widok PLAYBACK). Wiadomości w stylu fosforu, 3 gotowe pytania
- * (SUMMARY / KEY POINTS / TASKS) na rzędzie "screen" oraz pytanie GŁOSEM na klawiszu ASK/VOICE
- * (klawisz ⏺ jest globalnie przejęty na „nowe nagranie", więc głos jest na metalu po prawej).
+ * (SUMMARY / KEY POINTS / TASKS) na rzędzie "screen". Pytanie GŁOSEM jest na fizycznym klawiszu ⏺ (RECORD):
+ * w czacie ⏺ = nagraj pytanie (App nie nadpisuje go na „nowe nagranie", bo ma własny onPress). Trwała
+ * podpowiedź pod nagłówkiem (czerwona kropka + „TAP ⏺ TO ASK BY VOICE") informuje o tej roli klawisza.
  *
- * Głos: tap ASK/VOICE → nagrywaj → STOP → transkrypcja pytania (api.transcribe) → wyślij do /chat.
+ * Głos: tap ⏺ → nagrywaj → STOP (metal) → transkrypcja pytania (api.transcribe) → wyślij do /chat.
+ * Metal stały: STOP/BACK · ⏺ · PLAY/PAUSE (wygaszony — brak odtwarzania w czacie).
  * Wymaga notatki z transkryptem (wejście tylko dla transcribed+uri) — patrz PlaybackScreen.
  */
 import { useEffect, useRef, useState } from 'react';
@@ -156,23 +158,26 @@ export function useChatView({
             ? { tone: 'phosphor', pulse: false, lines: ['AI CHAT', 'ERROR'] }
             : { tone: 'phosphor', pulse: false, lines: ['AI CHAT', 'ASK ABOUT THIS NOTE'] };
 
-  const askKey = { type: 'label' as const, upper: 'ASK', lower: 'VOICE' };
+  // metal stały: STOP/BACK · ⏺ (RECORD = nagraj pytanie głosem) · PLAY/PAUSE (wygaszony — brak odtwarzania w czacie).
+  // ⏺ ma własny onPress (startVoice), więc App NIE nadpisze go na „nowe nagranie". startVoice sam się pilnuje (idle-only).
+  const recordAsk = { type: 'record' as const, onPress: startVoice };
+  const playPauseOff = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
   let keyboard: KeyboardConfig;
   if (voice === 'listening') {
     keyboard = {
       screen: [{ label: 'ABORT', supporting: '[TAP]', variant: 'risk', onPress: abortVoice }, { label: '' }, { label: '' }],
       // nagrywa pytanie → STOP świeci (stop+wyślij); inaczej BACK (do playera)
-      metal: [stopBackKey({ canStop: true, onStop: stopAndSend, onBack }), { type: 'record' }, { ...askKey, active: false }],
+      metal: [stopBackKey({ canStop: true, onStop: stopAndSend, onBack }), recordAsk, playPauseOff],
     };
   } else if (busy) {
     keyboard = {
       screen: [{ label: '' }, { label: '' }, { label: '' }],
-      metal: [stopBackKey({ canStop: false, onBack }), { type: 'record' }, { ...askKey, active: false }],
+      metal: [stopBackKey({ canStop: false, onBack }), recordAsk, playPauseOff],
     };
   } else {
     keyboard = {
       screen: PRESETS.map((p, i) => ({ label: p.label, variant: i === 0 ? ('primary' as const) : undefined, onPress: () => chat.ask(p.q) })),
-      metal: [stopBackKey({ canStop: false, onBack }), { type: 'record' }, { ...askKey, active: true, onPress: startVoice }],
+      metal: [stopBackKey({ canStop: false, onBack }), recordAsk, playPauseOff],
     };
   }
 
@@ -183,10 +188,16 @@ export function useChatView({
       <View style={{ flex: 1, alignSelf: 'stretch', paddingHorizontal: 16, paddingTop: 8 }}>
         <Text
           numberOfLines={1}
-          style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary, marginBottom: 8 }}
+          style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}
         >
           {`CHAT — ${rec?.title ?? 'NOTE'}`}
         </Text>
+        {/* trwała podpowiedź: realna czerwona kropka = klawisz ⏺, który w czacie zadaje pytanie głosem */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2, marginBottom: 8 }}>
+          <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>TAP</Text>
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color.recordRed }} />
+          <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>TO ASK BY VOICE</Text>
+        </View>
         <ScrollView
           ref={scrollRef}
           style={{ flex: 1, alignSelf: 'stretch' }}
@@ -203,7 +214,7 @@ export function useChatView({
                 marginTop: 24,
               }}
             >
-              ASK ABOUT THIS NOTE — TAP A PRESET, OR “ASK / VOICE”.
+              ASK ABOUT THIS NOTE — TAP A PRESET, OR THE RECORD KEY TO ASK BY VOICE.
             </Text>
           ) : null}
           {chat.messages.map((m, i) => (
