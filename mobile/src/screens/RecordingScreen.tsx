@@ -8,12 +8,12 @@ import { ReactNode, useEffect, useRef, useState } from 'react';
 import { View, Text } from 'react-native';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
-import { ScreenTopBar, BottomBar, Mode } from './ScreenChrome';
+import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 import { useBlink } from '../theme/BlinkContext';
 import { useAudioCapture } from '../hooks/useAudioCapture';
 import type { Rec } from '../hooks/useRecordings';
 import { genericName, nextSeq } from '../hooks/useRecordings';
-import type { TranscriptionStore } from '../hooks/useTranscription';
+import { deriveAiStatus, type TranscriptionStore } from '../hooks/useTranscription';
 import { persistRecording } from '../lib/recordingFiles';
 
 // redukcja obwiedni do N słupków (peak w każdym przedziale)
@@ -284,8 +284,9 @@ export function useRecordingScreen({
   // klawiatura zależna od stanu (środkowy klawisz "screen" w nagrywaniu/mute jest pusty — wg projektu)
   // podczas nagrywania DELETE → ABORT (przerwij nagranie; [HOLD] = długie przytrzymanie)
   const abortKey = { label: 'ABORT', supporting: '[HOLD]', variant: 'risk' as const, onHoldComplete: abort, holdMs: 2000 };
-  const stopActive = { type: 'label' as const, upper: 'STOP', active: true, onPress: stop };
-  const stopInactive = { type: 'label' as const, upper: 'STOP', active: false };
+  // metal[0] = stały fizyczny STOP/BACK; przy nagrywaniu/pauzie STOP świeci (stop+zapis), w READY/SAVED oba zgaszone (korzeń, brak powrotu)
+  const stopActive = stopBackKey({ canStop: true, onStop: stop });
+  const stopInactive = stopBackKey({ canStop: false });
   const playInactive = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
   // w oknie SAVED: PLAY/PAUSE aktywny → przejście do playera świeżego nagrania (autostart)
   const playSaved =
@@ -326,17 +327,9 @@ export function useRecordingScreen({
     };
   }
 
-  // realny stan transkrypcji ostatniego nagrania (z managera): % → „TRANSCRIBING (X%)",
-  // błąd → „FAILED", idle → „ACTIVE ON DEAPI"
-  const tState = transcription?.stateOf(lastSavedId);
-  const tPct = tState && (tState.status === 'uploading' || tState.status === 'processing') ? tState.pct ?? 0 : null;
-  const ai: [string, string] | undefined = aiEnabled
-    ? tPct != null
-      ? ['AI TRANSCRIBING', `IN BACKGROUND (${tPct}%)`]
-      : tState?.status === 'failed'
-        ? ['AI TRANSCRIPTION', 'FAILED']
-        : ['AI TRANSCRIPTION', 'ACTIVE ON DEAPI']
-    : undefined;
+  // statusbar AI ostatniego nagrania (wspólny deriver): READY → UPLOADING/PROCESSING → DONE.
+  // FAILED i kolor czerwony świadomie pominięte (patrz deriveAiStatus). AI off → IDLE (dim).
+  const ai = deriveAiStatus({ tState: transcription?.stateOf(lastSavedId), aiArmed: aiEnabled });
 
   // waveform: recording = animowany, pełna czerwień; muted = animowany 0 (cisza); ready/paused = kropki
   const waveActive = state === 'RECORDING' || state === 'MUTED';

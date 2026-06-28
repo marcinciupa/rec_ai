@@ -15,7 +15,43 @@ import * as db from '../lib/db';
 export type TransStatus = 'uploading' | 'processing' | 'done' | 'failed';
 export type TransUiState = { status: TransStatus; pct: number | null; error?: string };
 
-// tytuł z transkryptu: pierwsze słowa WIELKIMI literami (styl skeuomorficzny listy)
+// ── Widok statusu AI na pasku (deApi label) ──
+// REGUŁA: statusbar NIGDY nie jest czerwony i NIE informuje o błędzie (FAILED → IDLE/TRANSCRIBED).
+export type AiTone = 'phosphor' | 'dim';
+export type AiStatusView = { tone: AiTone; pulse: boolean; lines: [string, string] | null };
+
+/**
+ * Jeden punkt prawdy dla statusbara AI (wspólny dla Recording/Playback).
+ *  - tState: stan joba transkrypcji danego nagrania (z managera)
+ *  - transcribed: nagranie ma już transkrypt (trwały badge „TRANSCRIBED")
+ *  - noSpeech: transkrypt pusty (tytuł „(NO SPEECH)")
+ *  - aiArmed: ekran nagrywania z włączonym AUTO TRANSCRIBE (stan READY)
+ * FAILED świadomie pominięte — pasek wraca do IDLE (retry przez opcję TRANSCRIBE).
+ */
+export function deriveAiStatus(opts: {
+  tState?: TransUiState;
+  transcribed?: boolean;
+  noSpeech?: boolean;
+  aiArmed?: boolean;
+}): AiStatusView {
+  const { tState, transcribed, noSpeech, aiArmed } = opts;
+  switch (tState?.status) {
+    case 'uploading':
+      return { tone: 'phosphor', pulse: true, lines: ['AI TRANSCRIBING', 'UPLOADING…'] };
+    case 'processing':
+      return { tone: 'phosphor', pulse: true, lines: ['AI TRANSCRIBING', `PROCESSING (${tState.pct ?? 0}%)`] };
+    case 'done':
+      return { tone: 'phosphor', pulse: false, lines: ['AI TRANSCRIBED', 'DONE ✓'] };
+    // 'failed' → spada niżej (IDLE/TRANSCRIBED); statusbar nie pokazuje błędu
+  }
+  if (transcribed) return { tone: 'phosphor', pulse: false, lines: ['AI TRANSCRIBED', noSpeech ? 'NO SPEECH' : 'WITH DEAPI'] };
+  if (aiArmed) return { tone: 'phosphor', pulse: false, lines: ['AI TRANSCRIPTION', 'ACTIVE ON DEAPI'] };
+  return { tone: 'dim', pulse: false, lines: null };
+}
+
+const TITLE_MAX = 30; // lista pokazuje 1 linię → krótki tytuł
+
+// fallback: pierwsze słowa WIELKIMI literami (styl skeuomorficzny listy), gdy AI-tytuł niedostępny
 function deriveTitle(text: string): string {
   const clean = text
     .replace(/\[[^\]]*\]/g, ' ') // usuń znaczniki czasu [m:ss - m:ss]
@@ -23,7 +59,36 @@ function deriveTitle(text: string): string {
     .trim();
   if (!clean) return 'TRANSCRIBED NOTE';
   const head = clean.split(' ').slice(0, 5).join(' ');
-  return (head.length > 28 ? head.slice(0, 28) : head).toUpperCase();
+  return (head.length > TITLE_MAX ? head.slice(0, TITLE_MAX) : head).toUpperCase();
+}
+
+// porządkowanie odpowiedzi LLM na tytuł: bez cudzysłowów/markdownu/przedrostka, 1 linia, WIELKIE litery, przycięte
+function sanitizeTitle(raw: string): string {
+  const clean = (raw || '')
+    .split('\n')[0]
+    .replace(/^(tytuł|title)\s*[:\-–]\s*/i, '') // „Tytuł: …"
+    .replace(/[*_`"'“”„«»]/g, '') // markdown + cudzysłowy
+    .replace(/\s+/g, ' ')
+    .replace(/[.。!?]+$/, '') // znak końca zdania
+    .trim();
+  if (!clean) return '';
+  const t = clean.length > TITLE_MAX ? clean.slice(0, TITLE_MAX).replace(/\s+\S*$/, '') : clean; // tnij na granicy słowa
+  return t.toUpperCase();
+}
+
+// tytuł z CAŁOŚCI transkryptu przez LLM (backend /chat → OpenRouter); fallback = pierwsze słowa
+async function generateTitle(text: string): Promise<string> {
+  try {
+    const res = await api.chat({
+      transcript: text,
+      question:
+        'Wymyśl krótki, treściwy tytuł tej notatki głosowej (2–5 słów) oddający jej główny temat, w języku notatki. ' +
+        'Zwróć wyłącznie sam tytuł — bez cudzysłowów, bez przedrostka „Tytuł:", bez kropki na końcu.',
+    });
+    return sanitizeTitle(res.answer) || deriveTitle(text);
+  } catch {
+    return deriveTitle(text);
+  }
 }
 
 export function useTranscription(store: RecordingsStore) {
@@ -100,10 +165,18 @@ export function useTranscription(store: RecordingsStore) {
               jobId: res.job_id,
             })
             .catch(() => {});
-          // pusty transkrypt (np. cisza) → notatka oznaczona jako zrobiona, ale z czytelnym tytułem
+          // tytuł tymczasowy od razu (pierwsze słowa / „(NO SPEECH)"), żeby nie blokować momentu „done"
           store.update(rec.id, { transcribed: true, title: text ? deriveTitle(text) : '(NO SPEECH)' });
           setOne(rec.id, { status: 'done', pct: 100 });
           finishLater(rec.id, 1500);
+          // …a w tle podmień na tytuł z CAŁOŚCI transkryptu (AI). Fallback już ustawiony, więc błąd nie szkodzi.
+          if (text) {
+            generateTitle(text)
+              .then((title) => {
+                if (title) store.update(rec.id, { title });
+              })
+              .catch(() => {});
+          }
         } else if (res.status === 'processing') {
           // deAPI jeszcze liczy (okno backendu minęło) — zostaw jako processing, wznowimy po restarcie
           db.saveTranscript({

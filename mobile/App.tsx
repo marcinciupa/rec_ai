@@ -104,6 +104,15 @@ export default function App() {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => backRef.current());
     return () => sub.remove();
   }, []);
+  // Web (podgląd): brak systemowego back → Escape pełni jego rolę (zamyka panele/menu, wychodzi z odtwarzacza).
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') backRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   let content;
   let baseKeyboard;

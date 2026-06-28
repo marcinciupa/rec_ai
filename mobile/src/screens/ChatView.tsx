@@ -10,9 +10,10 @@ import { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView } from 'react-native';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
-import { ScreenTopBar, BottomBar, Mode } from './ScreenChrome';
+import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 import type { Rec } from '../hooks/useRecordings';
 import { useChat, ChatTurn } from '../hooks/useChat';
+import type { AiStatusView } from '../hooks/useTranscription';
 import { useAudioCapture } from '../hooks/useAudioCapture';
 import * as api from '../lib/api';
 import { deleteRecordingFile } from '../lib/recordingFiles';
@@ -143,34 +144,35 @@ export function useChatView({
     }
   };
 
-  // etykieta AI (deAPI) w pasku — odzwierciedla bieżący stan czatu
-  const ai: [string, string] =
+  // etykieta AI (deAPI) w pasku — odzwierciedla bieżący stan czatu (zawsze phosphor; aktywne stany pulsują)
+  const ai: AiStatusView =
     voice === 'listening'
-      ? ['AI CHAT', 'LISTENING…']
+      ? { tone: 'phosphor', pulse: true, lines: ['AI CHAT', 'LISTENING…'] }
       : voice === 'transcribing'
-        ? ['AI CHAT', 'READING QUESTION…']
+        ? { tone: 'phosphor', pulse: true, lines: ['AI CHAT', 'READING QUESTION…'] }
         : chat.phase === 'thinking'
-          ? ['AI CHAT', 'THINKING…']
+          ? { tone: 'phosphor', pulse: true, lines: ['AI CHAT', 'THINKING…'] }
           : chat.phase === 'error'
-            ? ['AI CHAT', 'ERROR']
-            : ['AI CHAT', 'ASK ABOUT THIS NOTE'];
+            ? { tone: 'phosphor', pulse: false, lines: ['AI CHAT', 'ERROR'] }
+            : { tone: 'phosphor', pulse: false, lines: ['AI CHAT', 'ASK ABOUT THIS NOTE'] };
 
   const askKey = { type: 'label' as const, upper: 'ASK', lower: 'VOICE' };
   let keyboard: KeyboardConfig;
   if (voice === 'listening') {
     keyboard = {
       screen: [{ label: 'ABORT', supporting: '[TAP]', variant: 'risk', onPress: abortVoice }, { label: '' }, { label: '' }],
-      metal: [{ type: 'label', upper: 'STOP', active: true, onPress: stopAndSend }, { type: 'record' }, { ...askKey, active: false }],
+      // nagrywa pytanie → STOP świeci (stop+wyślij); inaczej BACK (do playera)
+      metal: [stopBackKey({ canStop: true, onStop: stopAndSend, onBack }), { type: 'record' }, { ...askKey, active: false }],
     };
   } else if (busy) {
     keyboard = {
       screen: [{ label: '' }, { label: '' }, { label: '' }],
-      metal: [{ type: 'label', upper: 'BACK', active: true, onPress: onBack }, { type: 'record' }, { ...askKey, active: false }],
+      metal: [stopBackKey({ canStop: false, onBack }), { type: 'record' }, { ...askKey, active: false }],
     };
   } else {
     keyboard = {
       screen: PRESETS.map((p, i) => ({ label: p.label, variant: i === 0 ? ('primary' as const) : undefined, onPress: () => chat.ask(p.q) })),
-      metal: [{ type: 'label', upper: 'BACK', active: true, onPress: onBack }, { type: 'record' }, { ...askKey, active: true, onPress: startVoice }],
+      metal: [stopBackKey({ canStop: false, onBack }), { type: 'record' }, { ...askKey, active: true, onPress: startVoice }],
     };
   }
 

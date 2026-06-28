@@ -11,17 +11,18 @@ import { View, Text, Pressable, ScrollView } from 'react-native';
 import { usePlayer } from '../hooks/usePlayer';
 import { hapticKnob, hapticContinuous } from '../lib/haptics';
 import { getTranscript } from '../lib/db';
+import { shareRecording } from '../lib/share';
 import type { Transcript } from '../lib/types';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import type { SliderConfig } from '../components/chrome/SeekSlider';
-import { ScreenTopBar, BottomBar, Mode } from './ScreenChrome';
+import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 import type { Rec, RecordingsStore } from '../hooks/useRecordings';
 import { genericName } from '../hooks/useRecordings';
-import type { TranscriptionStore } from '../hooks/useTranscription';
+import { deriveAiStatus, type TranscriptionStore } from '../hooks/useTranscription';
 import { useChatView } from './ChatView';
 
-type Phase = 'LIST' | 'CONFIRM' | 'DELETED';
+type Phase = 'LIST' | 'CONFIRM' | 'DELETED' | 'DETAILS';
 type View2 = 'LIST' | 'PLAYER' | 'CHAT';
 type PlayerState = 'LOADING' | 'STOPPED' | 'PLAYING' | 'PAUSED';
 
@@ -125,8 +126,33 @@ function AiBadge({ c }: { c: string }) {
   );
 }
 
-/** Wiersz listy: [AI] nazwa … data. Zaznaczony = tło phosphor + ciemny tekst + glow. */
-function Row({ rec, name, selected, onPress }: { rec: Rec; name: string; selected: boolean; onPress: () => void }) {
+/** Opcja menu inline pod nazwą nagrania (Figma 161:12289): aktywna = ciemna pigułka #212121 z kropką
+ *  + zielony tekst z glow; nieaktywna = ciemny tekst #212121 na zielonym (zaznaczonym) wierszu. */
+type RowActionDef = { label: string; run: () => void };
+const PHOSPHOR_TEXT_GLOW = { textShadowColor: 'rgba(226,255,228,0.25)', textShadowRadius: 4, textShadowOffset: { width: 0, height: 0 } as const };
+function RowOption({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  const txt = { fontFamily: font.monoBody.family, fontSize: font.monoBody.size } as const;
+  return (
+    <Pressable onPress={onPress} hitSlop={6}>
+      {({ pressed }) =>
+        active ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: 2, paddingRight: 4, paddingVertical: 2, borderRadius: 3, backgroundColor: color.dark21, opacity: pressed ? 0.6 : 1 }}>
+            <Text style={{ ...txt, color: screen.olive.primary, ...PHOSPHOR_TEXT_GLOW }}>•</Text>
+            <Text style={{ ...txt, color: screen.olive.primary, ...PHOSPHOR_TEXT_GLOW }}>{label}</Text>
+          </View>
+        ) : (
+          <Text style={{ ...txt, color: color.dark21, opacity: pressed ? 0.6 : 1 }}>{label}</Text>
+        )
+      }
+    </Pressable>
+  );
+}
+
+/**
+ * Wiersz listy: [AI] nazwa … data. Zaznaczony = tło phosphor + ciemny tekst + glow, i rozwija POD nazwą
+ * rząd opcji menu (Figma 161:12289) — aktywną przełącza klawisz MENU [CYCLE], tap wykonuje. Na web hover zaznacza.
+ */
+function Row({ rec, name, selected, onSelect, options, focus }: { rec: Rec; name: string; selected: boolean; onSelect: () => void; options: RowActionDef[]; focus: number }) {
   const fg = selected ? color.dark21 : screen.olive.primary;
   const iconColor = selected
     ? rec.transcribed
@@ -136,26 +162,62 @@ function Row({ rec, name, selected, onPress }: { rec: Rec; name: string; selecte
       ? screen.olive.primary
       : screen.olive.inactive;
   return (
-    <Pressable onPress={onPress}>
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-          paddingVertical: 4,
-          paddingHorizontal: 6,
-          borderRadius: 2,
-          backgroundColor: selected ? screen.olive.primary : 'transparent',
-          ...(selected ? { boxShadow: `0px 0px 4px 0px rgba(226,255,228,0.25)` } : null),
-        } as any}
-      >
-        <AiBadge c={iconColor} />
-        <Text numberOfLines={1} style={{ flex: 1, fontFamily: font.monoBody.family, fontSize: font.monoBody.size, color: fg }}>
-          {name}
-        </Text>
-        <Text style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, color: fg }}>{rec.date}</Text>
-      </View>
-    </Pressable>
+    <View
+      style={{
+        borderRadius: 2,
+        padding: 4,
+        gap: 8,
+        backgroundColor: selected ? screen.olive.primary : 'transparent',
+        ...(selected ? { boxShadow: `0px 0px 4px 0px rgba(226,255,228,0.25)` } : null),
+      } as any}
+    >
+      <Pressable onPress={onSelect} onHoverIn={onSelect}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <AiBadge c={iconColor} />
+          <Text numberOfLines={1} style={{ flex: 1, fontFamily: font.monoBody.family, fontSize: font.monoBody.size, color: fg }}>
+            {name}
+          </Text>
+          <Text style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, color: fg }}>{rec.date}</Text>
+        </View>
+      </Pressable>
+      {selected && options.length ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', alignSelf: 'stretch' }}>
+          {options.map((o, i) => (
+            <RowOption key={o.label} label={o.label} active={i === focus} onPress={o.run} />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** Nakładka DETAILS: info o nagraniu na zielonym ekranie (klucz→wartość). */
+function DetailsPanel({ rows }: { rows: [string, string][] }) {
+  return (
+    <View
+      style={
+        {
+          position: 'absolute',
+          top: 48,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          borderRadius: 4,
+          backgroundColor: screen.olive.primary,
+          padding: 24,
+          gap: 12,
+          justifyContent: 'center',
+          boxShadow: `0px 0px 8px 0px rgba(226,255,228,0.25)`,
+        } as any
+      }
+    >
+      {rows.map(([k, v]) => (
+        <View key={k} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+          <Text style={{ fontFamily: font.monoLabel.family, fontSize: font.monoLabel.size, color: 'rgba(26,26,26,0.6)' }}>{k}</Text>
+          <Text numberOfLines={1} style={{ flex: 1, textAlign: 'right', fontFamily: font.monoBody.family, fontSize: font.monoBody.size, color: color.dark21 }}>{v}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -214,7 +276,8 @@ export function usePlaybackScreen({
   const [rawSel, setSelId] = useState<string>('');
   // selId zawsze ważne (po dodaniu/usunięciu nagrań fallback na pierwsze)
   const selId = recs.some((r) => r.id === rawSel) ? rawSel : recs[0]?.id ?? '';
-  const [phase, setPhase] = useState<Phase>('LIST'); // nakładki delete (widok LIST)
+  const [phase, setPhase] = useState<Phase>('LIST'); // nakładki delete/details (widok LIST)
+  const [menuFocus, setMenuFocus] = useState(0); // aktywna opcja menu inline (klawisz MENU [CYCLE])
   const [view, setView] = useState<View2>('LIST');
   const [playerState, setPlayerState] = useState<PlayerState>('STOPPED');
   const [pos, setPos] = useState(0); // sekundy w bieżącym nagraniu
@@ -306,6 +369,7 @@ export function usePlaybackScreen({
   const selectRec = (id: string) => {
     setSelId(id);
     setPos(0);
+    setMenuFocus(0); // nowy wybór → reset aktywnej opcji menu na pierwszą
   };
   const moveSel = (d: -1 | 1) => {
     const n = recs.length;
@@ -325,6 +389,7 @@ export function usePlaybackScreen({
 
   // ── nawigacja do/z odtwarzacza ──
   const openPlayer = () => {
+    setPhase('LIST'); // zamknij ewentualne menu/panel przed wejściem w odtwarzacz
     setView('PLAYER');
     setPos(0);
     setSpeed(1);
@@ -473,15 +538,13 @@ export function usePlaybackScreen({
     transcription?.start(sel);
   };
 
-  // realny stan transkrypcji zaznaczonego nagrania (z managera)
-  const tState = transcription?.stateOf(selId);
-  const transcribePct = tState && (tState.status === 'uploading' || tState.status === 'processing') ? tState.pct ?? 0 : null;
-  const ai: [string, string] | undefined =
-    transcribePct != null
-      ? ['AI TRANSCRIBING', `IN BACKGROUND (${transcribePct}%)`]
-      : tState?.status === 'failed'
-        ? ['AI TRANSCRIPTION', 'FAILED']
-        : undefined;
+  // statusbar AI zaznaczonego nagrania (wspólny deriver): job (UPLOADING/PROCESSING/DONE)
+  // → trwały TRANSCRIBED/NO SPEECH → IDLE. FAILED i czerwień świadomie pominięte (deriveAiStatus).
+  const ai = deriveAiStatus({
+    tState: transcription?.stateOf(selId),
+    transcribed: sel?.transcribed,
+    noSpeech: sel?.title === '(NO SPEECH)',
+  });
 
   // systemowy back: zamknij prompt/panel → wyjdź z odtwarzacza → (false = App cofa do nagrywania)
   const goBack = (): boolean => {
@@ -523,8 +586,8 @@ export function usePlaybackScreen({
     let keyboard: KeyboardConfig;
     if (loading) {
       keyboard = {
-        screen: [{ label: '' }, { label: 'ABORT', onPress: backToList }, { label: '' }],
-        metal: [{ type: 'label', upper: 'STOP', active: false }, recordKey, { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+        screen: [{ label: '' }, { label: '' }, { label: '' }],
+        metal: [stopBackKey({ canStop: false, onBack: backToList }), recordKey, { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
       };
     } else {
       keyboard = {
@@ -535,11 +598,12 @@ export function usePlaybackScreen({
             : sel?.uri && !sel?.transcribed
               ? { label: 'TRANS-\nCRIBE', onPress: transcribe }
               : { label: '' },
-          // gra → toggle prędkości (label = co zrobi klik: przy 1× „2X SPEED", przy 2× „1X SPEED"); inaczej → RECORDINGS
-          playing ? { label: speed === 1 ? '2X\nSPEED' : '1X\nSPEED', onPress: toggleSpeed } : { label: 'RECORD-\nINGS', onPress: backToList },
+          // gra → toggle prędkości (przy 1× „2X SPEED", przy 2× „1X SPEED"); pauza/stop → wolny slot (BACK jest na metalu)
+          playing ? { label: speed === 1 ? '2X\nSPEED' : '1X\nSPEED', onPress: toggleSpeed } : { label: '' },
         ],
         metal: [
-          { type: 'label', upper: 'STOP', active: started, onPress: started ? playerStop : undefined },
+          // gra/pauza → STOP (stop+seek0); zatrzymany → BACK (do listy)
+          stopBackKey({ canStop: started, onStop: playerStop, onBack: backToList }),
           recordKey,
           { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: !playing, lowerActive: playing, onPress: playerPlayPause },
         ],
@@ -646,12 +710,9 @@ export function usePlaybackScreen({
     const capStyle = { fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary } as const;
     // nagranie transkrybowane → zamiast waveformu pokaż tekst transkryptu (Figma 161:12290)
     const showTranscript = !loading && !!sel?.transcribed && !!transcript?.text;
-    // nagłówek AI: w trakcie/po błędzie z managera (ai), inaczej dla transkrybowanego „AI TRANSCRIBED WITH DEAPI"
-    const playerAi: [string, string] | undefined = ai ?? (sel?.transcribed ? ['AI TRANSCRIBED', 'WITH DEAPI'] : undefined);
-
     const content = (
       <>
-        <ScreenTopBar mode={mode} onCycleMode={undefined} ai={playerAi} labelActive={playing} />
+        <ScreenTopBar mode={mode} onCycleMode={undefined} ai={ai} labelActive={playing} />
         <View style={{ flex: 1, alignSelf: 'stretch', justifyContent: showTranscript ? 'flex-start' : 'center', gap: 24, paddingHorizontal: 16, paddingTop: showTranscript ? 8 : 0 }}>
           {showTranscript ? (
             <TranscriptView transcript={transcript!} ratio={uiLen > 0 ? uiPos / uiLen : 0} posSec={uiPos} />
@@ -699,7 +760,7 @@ export function usePlaybackScreen({
     const keyboard: KeyboardConfig = {
       screen: [{ label: '' }, { label: 'SETTINGS', onPress: onOpenSettings }, { label: '' }],
       metal: [
-        { type: 'label', upper: 'STOP', active: false },
+        stopBackKey({ canStop: false, onBack: onStartRecording }),
         { type: 'record', onPress: onStartRecording },
         { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
       ],
@@ -718,31 +779,56 @@ export function usePlaybackScreen({
 
   // ════════════ WIDOK: LIST ════════════
   const overlay = phase !== 'LIST';
+  // opcje menu inline ZAZNACZONEGO nagrania (DELETE jest osobnym klawiszem). Slot 1 = akcja AI wg stanu.
+  const menuOptions: RowActionDef[] = sel
+    ? [
+        ...(sel.uri && !sel.transcribed ? [{ label: 'TRANSCRIBE', run: transcribe }] : []),
+        ...(sel.uri && sel.transcribed ? [{ label: 'ASK AI', run: () => { haltPlayer(); setView('CHAT'); } }] : []),
+        ...(sel.uri ? [{ label: 'SHARE', run: () => { shareRecording(sel.uri, displayName(sel, recs)); } }] : []),
+        { label: 'DETAILS', run: () => setPhase('DETAILS') },
+        { label: 'DELETE', run: askDelete }, // → faza CONFIRM (nakładka YES[HOLD]/CANCEL)
+      ]
+    : [];
+  const menuLen = menuOptions.length;
+  const mFocus = menuLen ? menuFocus % menuLen : 0; // zawsze w zakresie (opcje zależą od stanu nagrania)
+  const cycleMenu = () => { if (menuLen) setMenuFocus((mFocus + 1) % menuLen); };
+
   let keyboard: KeyboardConfig;
+  // metal[0] = stały fizyczny STOP/BACK (label niezmienny); na liście STOP zgaszony, BACK świeci (powrót/zamknięcie).
+  const recordKeyList = { type: 'record' as const, onPress: onStartRecording };
+  const playKeyOff = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
   if (phase === 'CONFIRM') {
     keyboard = {
       screen: [
         { label: 'YES', supporting: '[HOLD]', variant: 'highRisk', onHoldComplete: confirmDelete, holdMs: 2000 },
         { label: '' },
-        { label: 'CANCEL', onPress: cancelDelete },
+        { label: '' },
       ],
-      metal: [{ type: 'label', upper: 'STOP', active: false }, { type: 'record', onPress: onStartRecording }, { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+      metal: [stopBackKey({ canStop: false, onBack: cancelDelete }), recordKeyList, playKeyOff],
     };
   } else if (phase === 'DELETED') {
     keyboard = {
       screen: [{ label: '' }, { label: 'UNDO', supporting: '[HOLD]', variant: 'primary', onHoldStart: armDeletedDismiss, onHoldComplete: undo, holdMs: 2000 }, { label: '' }],
-      metal: [{ type: 'label', upper: 'STOP', active: false }, { type: 'record', onPress: onStartRecording }, { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), recordKeyList, playKeyOff],
+    };
+  } else if (phase === 'DETAILS') {
+    keyboard = {
+      screen: [{ label: '' }, { label: '' }, { label: '' }],
+      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), recordKeyList, playKeyOff],
     };
   } else {
     keyboard = {
+      // ACCEPT (wykonuje podświetloną opcję) · SETTINGS · MENU[CYCLE] (przełącza aktywną opcję inline).
+      // DELETE przeniesione do menu pod nazwą (z potwierdzeniem YES[HOLD]/CANCEL).
       screen: [
-        { label: 'DELETE', supporting: '[HOLD]', variant: 'risk', onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 },
+        { label: 'ACCEPT', variant: 'primary', onPress: () => menuOptions[mFocus]?.run() },
         { label: 'SETTINGS', onPress: onOpenSettings },
-        sel && !sel.transcribed && sel.uri ? { label: 'TRANS-\nCRIBE', onPress: transcribe } : { label: '' },
+        { label: 'MENU', supporting: '[CYCLE]', onPress: cycleMenu },
       ],
       metal: [
-        { type: 'label', upper: 'STOP', active: false },
-        { type: 'record', onPress: onStartRecording },
+        // nic nie gra → BACK świeci (do ekranu nagrywania)
+        stopBackKey({ canStop: false, onBack: onStartRecording }),
+        recordKeyList,
         // PLAY otwiera dedykowany odtwarzacz dla zaznaczonego nagrania
         { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: true, onPress: sel ? openPlayer : undefined },
       ],
@@ -758,9 +844,28 @@ export function usePlaybackScreen({
       <View style={{ flex: 1, alignSelf: 'stretch', paddingHorizontal: 16, paddingTop: 8 }}>
         <View style={{ gap: 8, opacity: overlay ? 0.35 : 1 }}>
           {recs.map((r) => (
-            <Row key={r.id} rec={r} name={displayName(r, recs)} selected={r.id === selId} onPress={() => selectRec(r.id)} />
+            <Row
+              key={r.id}
+              rec={r}
+              name={displayName(r, recs)}
+              selected={r.id === selId}
+              onSelect={() => selectRec(r.id)}
+              options={r.id === selId ? menuOptions : []}
+              focus={mFocus}
+            />
           ))}
         </View>
+        {phase === 'DETAILS' && sel ? (
+          <DetailsPanel
+            rows={[
+              ['NAME', displayName(sel, recs)],
+              ['DATE', sel.date],
+              ['LENGTH', fmt(sel.lengthSec)],
+              ['SIZE', fileSize(sel)],
+              ['AI', sel.transcribed ? 'TRANSCRIBED' : 'NOT TRANSCRIBED'],
+            ]}
+          />
+        ) : null}
         {phase === 'CONFIRM' && sel ? <OverlayPanel tone="red" title={`DELETE “${displayName(sel, recs)}”?`} sub={`RECORDED ON ${sel.date}`} /> : null}
         {phase === 'DELETED' && lastDeleted.current ? <OverlayPanel tone="phosphor" title={`“${lastDeleted.current.name}” DELETED`} /> : null}
       </View>

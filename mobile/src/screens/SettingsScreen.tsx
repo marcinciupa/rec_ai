@@ -19,7 +19,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { color, font, screen, textShadow, ThemeName } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
-import { ScreenTopBar, BottomBar, Mode } from './ScreenChrome';
+import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 
 const SETTINGS_KEY = 'recai.settings.v1'; // trwałość ustawień (AsyncStorage; web=localStorage)
 
@@ -270,12 +270,12 @@ export function useSettingsScreen({
   const keyboard: KeyboardConfig = {
     screen: [
       { label: 'CHANGE', variant: 'primary', onPress: () => changeBy(1) },
-      { label: 'BACK', onPress: onClose },
+      { label: '' },
       { label: 'NEXT', supporting: '[CYCLE]', onPress: () => move(1) },
     ],
     metal: [
-      // STOP/PLAY nieaktywne w ustawieniach → przygaszone (buttonInactive wg motywu)
-      { type: 'label', upper: 'STOP', active: false },
+      // metal[0] = stały fizyczny STOP/BACK; w ustawieniach STOP zgaszony, BACK świeci (wyjście do poprz. ekranu)
+      stopBackKey({ canStop: false, onBack: onClose }),
       { type: 'record' },
       { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
     ],
