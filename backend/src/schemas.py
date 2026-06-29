@@ -27,6 +27,7 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = []
     question: str
     model: str | None = None
+    language: str | None = None  # kod języka odpowiedzi AI (np. "en", "pl"); brak → English
 
 
 class ChatResponse(BaseModel):

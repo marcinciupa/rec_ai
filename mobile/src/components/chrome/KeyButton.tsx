@@ -70,6 +70,36 @@ function ProgressRing({ progress, ringColor }: { progress: Animated.Value; ringC
   );
 }
 
+/**
+ * StaticRing — statyczny pierścień (Figma 121:269 „progress") wypełniony w `fraction` (0..1).
+ * Używany np. na klawiszu SPEED do pokazania biegu prędkości (0/25/50/75%). Start od dołu (180°).
+ */
+function StaticRing({ fraction, ringColor }: { fraction: number; ringColor: string }) {
+  const size = dims.keyInner.size; // 60
+  const sw = 2;
+  const r = (size - sw) / 2;
+  const c = 2 * Math.PI * r;
+  const f = Math.max(0, Math.min(1, fraction));
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', width: size, height: size }}>
+      <Svg width={size} height={size}>
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          stroke={ringColor}
+          strokeWidth={sw}
+          fill="none"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - f)}
+          strokeLinecap="round"
+          transform={`rotate(90 ${size / 2} ${size / 2})`}
+        />
+      </Svg>
+    </View>
+  );
+}
+
 /** Połysk szyby przycisku "screen" — biały gradient TL→BR, sunie z przechyleniem. */
 function ScreenSheen() {
   const tilt = useTiltCtx();
@@ -226,6 +256,7 @@ export function ScreenKey({
   onHoldComplete,
   onHoldStart,
   holdMs = 2000,
+  progress: progressFraction,
 }: {
   label: string;
   supporting?: string;
@@ -235,6 +266,7 @@ export function ScreenKey({
   onHoldComplete?: () => void;
   onHoldStart?: () => void;
   holdMs?: number;
+  progress?: number; // statyczny pierścień 0..1 (np. bieg prędkości na SPEED); niezależny od holdu
 }) {
   // kolor tekstu: primary/highRisk = ciemny (na jasnym tle, bez glow); risk = czerwony+glow; default = phosphor+glow
   const dark = variant === 'primary' || variant === 'highRisk';
@@ -297,6 +329,7 @@ export function ScreenKey({
       onPressOut={onHoldComplete ? cancelHold : undefined}
     >
       {onHoldComplete ? <ProgressRing progress={progress} ringColor={ringColor} /> : null}
+      {progressFraction != null ? <StaticRing fraction={progressFraction} ringColor={ringColor} /> : null}
       <Text
         style={{
           fontFamily: font.monoLabel.family,

@@ -21,6 +21,7 @@ async def chat(
             history=[m.model_dump() for m in body.messages],
             question=body.question,
             model=body.model,
+            language=body.language,
         )
     except OpenRouterError as e:
         raise HTTPException(status_code=502, detail=f"chat failed: {e}")

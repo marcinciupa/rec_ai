@@ -14,7 +14,7 @@ import { getTranscript } from '../lib/db';
 import { shareRecording } from '../lib/share';
 import type { Transcript } from '../lib/types';
 import { color, font, screen } from '../theme/tokens';
-import type { KeyboardConfig } from '../components/chrome/Keyboard';
+import type { KeyboardConfig, ScreenKeyDef } from '../components/chrome/Keyboard';
 import type { SliderConfig } from '../components/chrome/SeekSlider';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 import type { Rec, RecordingsStore } from '../hooks/useRecordings';
@@ -55,6 +55,15 @@ const fmt = (sec: number) => {
 };
 const glow = (c: string) => ({ textShadowColor: c, textShadowRadius: 4, textShadowOffset: { width: 0, height: 0 } });
 
+// Prędkość odtwarzania: biegi i odpowiadające im wypełnienie pierścienia na klawiszu SPEED.
+const SPEED_LEVELS = [1, 1.5, 2, 3];
+const speedFill = (s: number) => Math.max(0, SPEED_LEVELS.indexOf(s)) * 0.25; // 1×=0, 1.5×=.25, 2×=.5, 3×=.75
+// timestamp segmentu transkryptu w formacie M:SS (Figma „0:00", „0:12")
+const fmtShort = (sec: number) => {
+  const s = Math.max(0, Math.floor(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
 // waveform odtwarzania: stałe „nagrane" słupki; zagrana część jasna, reszta wygaszona
 const WAVE_N = 48;
 // mock (pliki demo bez nagranej obwiedni)
@@ -74,45 +83,96 @@ function PlayWaveform({ ratio, dim, samples }: { ratio: number; dim?: boolean; s
   );
 }
 
-// Transkrypt w playerze (Figma 161:12290): tekst Mono/Body; wypowiedziana część jasna (phosphor),
-// reszta wygaszona — analogicznie do waveformu (zagrane = jasne). Auto-scroll podąża za odtwarzaniem.
+// Pojedynczy segment transkryptu w playerze (Figma 288:3568): kolumna timestampów [start/koniec]
+// + tekst Mono/Body. Stan wg pozycji: odtworzony = jasny; bieżący = wypowiedziana część jasna,
+// reszta przyciemniona; nadchodzący = cały przyciemniony.
+function TranscriptRow({ startN, endN, endLabel, text, posSec }: { startN: number; endN: number; endLabel: string; text: string; posSec: number }) {
+  const bright = screen.olive.primary;
+  const dim = screen.olive.secondary;
+  const played = posSec >= endN; // segment w całości za nami
+  const current = posSec >= startN && posSec < endN;
+  const cap = { fontFamily: font.monoCaption.family, fontSize: font.monoCaption.size } as const;
+  const body = { fontFamily: font.monoBody.family, fontSize: font.monoBody.size, lineHeight: Math.round(font.monoBody.size * 1.5) } as const;
+  // podział tekstu bieżącego segmentu po znakach proporcjonalnie do upływu czasu w jego obrębie
+  let bodyNode: ReactNode;
+  if (played) {
+    bodyNode = <Text style={{ color: bright }}>{text}</Text>;
+  } else if (current && isFinite(endN) && endN > startN) {
+    const frac = Math.max(0, Math.min(1, (posSec - startN) / (endN - startN)));
+    const cut = Math.round(text.length * frac);
+    bodyNode = (
+      <>
+        <Text style={{ color: bright }}>{text.slice(0, cut)}</Text>
+        <Text style={{ color: dim }}>{text.slice(cut)}</Text>
+      </>
+    );
+  } else if (current) {
+    bodyNode = <Text style={{ color: bright }}>{text}</Text>; // bieżący bez czasu końca → cały jasny
+  } else {
+    bodyNode = <Text style={{ color: dim }}>{text}</Text>;
+  }
+  return (
+    <View style={{ flexDirection: 'row', alignSelf: 'stretch', gap: 8 }}>
+      <View style={{ justifyContent: 'center' }}>
+        <Text style={{ ...cap, color: posSec >= startN ? bright : dim }}>{fmtShort(startN)}</Text>
+        <Text style={{ ...cap, color: played ? bright : dim, marginTop: -2 }}>{endLabel}</Text>
+      </View>
+      <Text style={{ ...body, flex: 1 }}>{bodyNode}</Text>
+    </View>
+  );
+}
+
+// Transkrypt w playerze (Figma 288:3568): lista segmentów z timestampami (karaoke). Bieżący segment
+// jasny z podziałem wypowiedziano/reszta, kolejne przyciemnione; auto-scroll trzyma bieżący w widoku.
+// Bez czasów segmentów → fallback: jeden blok z podziałem proporcjonalnym (jak dotąd).
 function TranscriptView({ transcript, ratio, posSec }: { transcript: Transcript; ratio: number; posSec: number }) {
   const segs = transcript.segments;
-  let played = '';
-  let rest = '';
-  if (segs && segs.length) {
-    // segmenty z czasami: wypowiedziane = te, których start już minął
-    const parts = segs.map((s) => s.text.trim());
-    const cut = segs.findIndex((s) => (s.start ?? Infinity) > posSec);
-    const k = cut === -1 ? segs.length : cut;
-    played = parts.slice(0, k).join(' ');
-    rest = (k > 0 && k < parts.length ? ' ' : '') + parts.slice(k).join(' ');
-  } else {
-    // brak czasów: podział proporcjonalny po znakach (ratio = pozycja/długość)
-    const text = transcript.text ?? '';
-    const at = Math.max(0, Math.min(text.length, Math.round(text.length * ratio)));
-    played = text.slice(0, at);
-    rest = text.slice(at);
-  }
   const scrollRef = useRef<ScrollView>(null);
   const sizes = useRef({ content: 0, view: 0 });
-  const pct = Math.round(ratio * 100); // przewijaj skokowo co ~1% (bez janku przy każdym ticku pozycji)
+  const hasSegs = !!(segs && segs.length);
+
+  // granice czasowe segmentów (koniec = własny end → start następnego → ∞ dla ostatniego)
+  const rows = hasSegs
+    ? segs!.map((s, i) => {
+        const startN = s.start ?? 0;
+        const nextStart = segs![i + 1]?.start ?? null;
+        const endN = s.end ?? nextStart ?? Infinity;
+        return { startN, endN, endLabel: s.end != null || nextStart != null ? fmtShort(s.end ?? nextStart!) : '', text: s.text.trim() };
+      })
+    : [];
+  // indeks bieżącego segmentu (do auto-scrolla); poza zakresem → pierwszy/ostatni
+  let curIdx = rows.findIndex((r) => posSec >= r.startN && posSec < r.endN);
+  if (curIdx < 0) curIdx = posSec <= 0 ? 0 : rows.length - 1;
+
+  const pct = hasSegs ? curIdx : Math.round(ratio * 100); // segmenty: scroll na zmianie segmentu; fallback: co ~1%
   useEffect(() => {
     const max = Math.max(0, sizes.current.content - sizes.current.view);
-    scrollRef.current?.scrollTo({ y: max * (pct / 100), animated: true });
+    const frac = hasSegs ? (rows.length > 1 ? curIdx / (rows.length - 1) : 0) : ratio;
+    scrollRef.current?.scrollTo({ y: max * frac, animated: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pct]);
+
+  // fallback bez czasów: jeden blok, podział proporcjonalny po znakach
+  const text = transcript.text ?? '';
+  const at = Math.max(0, Math.min(text.length, Math.round(text.length * ratio)));
+
   return (
     <ScrollView
       ref={scrollRef}
       style={{ flex: 1, alignSelf: 'stretch' }}
+      contentContainerStyle={hasSegs ? { gap: 4 } : undefined}
       onLayout={(e) => { sizes.current.view = e.nativeEvent.layout.height; }}
       onContentSizeChange={(_w, h) => { sizes.current.content = h; }}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, lineHeight: Math.round(font.monoBody.size * 1.5) }}>
-        <Text style={{ color: screen.olive.primary }}>{played}</Text>
-        <Text style={{ color: screen.olive.inactive }}>{rest}</Text>
-      </Text>
+      {hasSegs ? (
+        rows.map((r, i) => <TranscriptRow key={i} startN={r.startN} endN={r.endN} endLabel={r.endLabel} text={r.text} posSec={posSec} />)
+      ) : (
+        <Text style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, lineHeight: Math.round(font.monoBody.size * 1.5) }}>
+          <Text style={{ color: screen.olive.primary }}>{text.slice(0, at)}</Text>
+          <Text style={{ color: screen.olive.inactive }}>{text.slice(at)}</Text>
+        </Text>
+      )}
     </ScrollView>
   );
 }
@@ -126,19 +186,32 @@ function AiBadge({ c }: { c: string }) {
   );
 }
 
-/** Opcja menu inline pod nazwą nagrania (Figma 161:12289): aktywna = ciemna pigułka #212121 z kropką
- *  + zielony tekst z glow; nieaktywna = ciemny tekst #212121 na zielonym (zaznaczonym) wierszu. */
-type RowActionDef = { label: string; run: () => void };
+/** Opcja menu inline pod nazwą nagrania (Figma 161:12289 / 288:3942): aktywna = ciemna pigułka #212121
+ *  z kropką + tekst z glow; nieaktywna = ciemny tekst #212121 na zielonym (zaznaczonym) wierszu.
+ *  `risk` (DELETE) → tylko w stanie aktywnym czerwień #FF4C4C z poświatą zamiast phosphoru;
+ *  nieaktywne pozostaje ciemne (#212121) jak reszta opcji. */
+type RowActionDef = {
+  label: string;
+  run: () => void;
+  risk?: boolean; // DELETE — czerwony styl w inline-menu + High Risk na klawiszu akcji
+  keyLabel?: string; // etykieta na klawiszu akcji, gdy różna od label (DETAILS → SHOW DETAILS)
+  supporting?: string; // dolny label klawisza akcji (DELETE → [HOLD])
+  onHoldComplete?: () => void; // hold na klawiszu akcji (DELETE → confirmDelete)
+  holdMs?: number;
+};
 const PHOSPHOR_TEXT_GLOW = { textShadowColor: 'rgba(226,255,228,0.25)', textShadowRadius: 4, textShadowOffset: { width: 0, height: 0 } as const };
-function RowOption({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+const RED_TEXT_GLOW = { textShadowColor: 'rgba(255,76,76,0.5)', textShadowRadius: 4, textShadowOffset: { width: 0, height: 0 } as const };
+function RowOption({ label, active, risk, onPress }: { label: string; active: boolean; risk?: boolean; onPress: () => void }) {
   const txt = { fontFamily: font.monoBody.family, fontSize: font.monoBody.size } as const;
+  const activeColor = risk ? color.recordRed : screen.olive.primary;
+  const activeGlow = risk ? RED_TEXT_GLOW : PHOSPHOR_TEXT_GLOW;
   return (
     <Pressable onPress={onPress} hitSlop={6}>
       {({ pressed }) =>
         active ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: 2, paddingRight: 4, paddingVertical: 2, borderRadius: 3, backgroundColor: color.dark21, opacity: pressed ? 0.6 : 1 }}>
-            <Text style={{ ...txt, color: screen.olive.primary, ...PHOSPHOR_TEXT_GLOW }}>•</Text>
-            <Text style={{ ...txt, color: screen.olive.primary, ...PHOSPHOR_TEXT_GLOW }}>{label}</Text>
+            <Text style={{ ...txt, color: activeColor, ...activeGlow }}>•</Text>
+            <Text style={{ ...txt, color: activeColor, ...activeGlow }}>{label}</Text>
           </View>
         ) : (
           <Text style={{ ...txt, color: color.dark21, opacity: pressed ? 0.6 : 1 }}>{label}</Text>
@@ -150,7 +223,7 @@ function RowOption({ label, active, onPress }: { label: string; active: boolean;
 
 /**
  * Wiersz listy: [AI] nazwa … data. Zaznaczony = tło phosphor + ciemny tekst + glow, i rozwija POD nazwą
- * rząd opcji menu (Figma 161:12289) — aktywną przełącza klawisz MENU [CYCLE], tap wykonuje. Na web hover zaznacza.
+ * rząd opcji menu (Figma 161:12289) — aktywną przełącza knob lub klawisz MENU [CYCLE], tap wykonuje. Na web hover zaznacza.
  */
 function Row({ rec, name, selected, onSelect, options, focus }: { rec: Rec; name: string; selected: boolean; onSelect: () => void; options: RowActionDef[]; focus: number }) {
   const fg = selected ? color.dark21 : screen.olive.primary;
@@ -183,7 +256,7 @@ function Row({ rec, name, selected, onSelect, options, focus }: { rec: Rec; name
       {selected && options.length ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', alignSelf: 'stretch' }}>
           {options.map((o, i) => (
-            <RowOption key={o.label} label={o.label} active={i === focus} onPress={o.run} />
+            <RowOption key={o.label} label={o.label} active={i === focus} risk={o.risk} onPress={o.run} />
           ))}
         </View>
       ) : null}
@@ -253,6 +326,8 @@ function OverlayPanel({ tone, title, sub }: { tone: 'red' | 'phosphor'; title: s
 export function usePlaybackScreen({
   store,
   mono = false,
+  language = 'en',
+  onTyping,
   mode = 'PLAYBACK',
   onCycleMode,
   onOpenSettings,
@@ -263,6 +338,8 @@ export function usePlaybackScreen({
 }: {
   store: RecordingsStore;
   mono?: boolean;
+  language?: string;
+  onTyping?: (on: boolean) => void; // czat wszedł/wyszedł z trybu pisania (klawiatura systemowa)
   mode?: Mode;
   onCycleMode?: () => void;
   onOpenSettings?: () => void;
@@ -303,7 +380,7 @@ export function usePlaybackScreen({
   const { player, status: pstatus } = usePlayer();
   const realMode = view === 'PLAYER' && !!sel?.uri;
   // pod-widok czatu o notatce (hook zawsze zamontowany; aktywny dopiero w view==='CHAT')
-  const chatView = useChatView({ rec: sel, active: view === 'CHAT', mode, mono, onBack: () => setView('PLAYER') });
+  const chatView = useChatView({ rec: sel, active: view === 'CHAT', mode, mono, language, nameLabel: sel ? `${displayName(sel, recs)} (${fileSize(sel)})` : '', onTypingChange: onTyping, onBack: () => setView('PLAYER') });
 
   // ── PLAYER: ładowanie (tylko demo/mock; realny plik ma własny status) ──
   useEffect(() => {
@@ -454,8 +531,11 @@ export function usePlaybackScreen({
     setPlayerState('STOPPED');
     setPos(0);
   };
-  const toggleSpeed = () => {
-    const next = speed === 1 ? 2 : 1;
+  // Prędkość ODTWARZANIA (nie przewijania): cykl 1× → 1.5× → 2× → 3× → 1×, z pierścieniem
+  // wypełnienia na klawiszu (0 / 25 / 50 / 75%). Klawisz pokazuje bieżącą prędkość.
+  const cycleSpeed = () => {
+    const i = SPEED_LEVELS.indexOf(speed);
+    const next = SPEED_LEVELS[(i + 1) % SPEED_LEVELS.length];
     setSpeed(next);
     if (sel?.uri) {
       try {
@@ -598,8 +678,8 @@ export function usePlaybackScreen({
             : sel?.uri && !sel?.transcribed
               ? { label: 'TRANS-\nCRIBE', onPress: transcribe }
               : { label: '' },
-          // gra → toggle prędkości (przy 1× „2X SPEED", przy 2× „1X SPEED"); pauza/stop → wolny slot (BACK jest na metalu)
-          playing ? { label: speed === 1 ? '2X\nSPEED' : '1X\nSPEED', onPress: toggleSpeed } : { label: '' },
+          // gra → prędkość odtwarzania z pierścieniem biegu (1×/1.5×/2×/3×); pauza/stop → wolny slot (BACK jest na metalu)
+          playing ? { label: `${speed}X\nSPEED`, onPress: cycleSpeed, progress: speedFill(speed) } : { label: '' },
         ],
         metal: [
           // gra/pauza → STOP (stop+seek0); zatrzymany → BACK (do listy)
@@ -785,13 +865,28 @@ export function usePlaybackScreen({
         ...(sel.uri && !sel.transcribed ? [{ label: 'TRANSCRIBE', run: transcribe }] : []),
         ...(sel.uri && sel.transcribed ? [{ label: 'ASK AI', run: () => { haltPlayer(); setView('CHAT'); } }] : []),
         ...(sel.uri ? [{ label: 'SHARE', run: () => { shareRecording(sel.uri, displayName(sel, recs)); } }] : []),
-        { label: 'DETAILS', run: () => setPhase('DETAILS') },
-        { label: 'DELETE', run: askDelete }, // → faza CONFIRM (nakładka YES[HOLD]/CANCEL)
+        { label: 'DETAILS', run: () => setPhase('DETAILS'), keyLabel: 'SHOW DETAILS' },
+        // DELETE (Figma 288:3942): czerwona opcja inline + klawisz High Risk z pełną mechaniką:
+        // tap → nakładka CONFIRM (YES[HOLD]/CANCEL), [HOLD] → usuń od razu (→ DELETED z UNDO).
+        { label: 'DELETE', run: askDelete, risk: true, supporting: '[HOLD]', onHoldComplete: confirmDelete, holdMs: 2000 },
       ]
     : [];
   const menuLen = menuOptions.length;
   const mFocus = menuLen ? menuFocus % menuLen : 0; // zawsze w zakresie (opcje zależą od stanu nagrania)
-  const cycleMenu = () => { if (menuLen) setMenuFocus((mFocus + 1) % menuLen); };
+  const cycleMenu = (dir: 1 | -1 = 1) => { if (menuLen) setMenuFocus((mFocus + dir + menuLen) % menuLen); };
+  // pierwszy klawisz „odbija" aktywną opcję inline: label (DETAILS → SHOW DETAILS), wariant (DELETE → High Risk),
+  // oraz hold (DELETE → confirmDelete). tap = wykonaj opcję.
+  const focusedOpt = menuOptions[mFocus];
+  const actionKey: ScreenKeyDef = focusedOpt
+    ? {
+        label: focusedOpt.keyLabel ?? focusedOpt.label,
+        supporting: focusedOpt.supporting,
+        variant: focusedOpt.risk ? 'highRisk' : 'primary',
+        onPress: focusedOpt.run,
+        onHoldComplete: focusedOpt.onHoldComplete,
+        holdMs: focusedOpt.holdMs,
+      }
+    : { label: 'ACCEPT', variant: 'primary' };
 
   let keyboard: KeyboardConfig;
   // metal[0] = stały fizyczny STOP/BACK (label niezmienny); na liście STOP zgaszony, BACK świeci (powrót/zamknięcie).
@@ -802,7 +897,7 @@ export function usePlaybackScreen({
       screen: [
         { label: 'YES', supporting: '[HOLD]', variant: 'highRisk', onHoldComplete: confirmDelete, holdMs: 2000 },
         { label: '' },
-        { label: '' },
+        { label: 'CANCEL', onPress: cancelDelete },
       ],
       metal: [stopBackKey({ canStop: false, onBack: cancelDelete }), recordKeyList, playKeyOff],
     };
@@ -818,12 +913,12 @@ export function usePlaybackScreen({
     };
   } else {
     keyboard = {
-      // ACCEPT (wykonuje podświetloną opcję) · SETTINGS · MENU[CYCLE] (przełącza aktywną opcję inline).
-      // DELETE przeniesione do menu pod nazwą (z potwierdzeniem YES[HOLD]/CANCEL).
+      // klawisz akcji = aktywna opcja inline (ASK AI / SHARE / SHOW DETAILS / DELETE[HOLD]) · SETTINGS · MENU[CYCLE].
+      // DELETE niesie pełną mechanikę potwierdzania (tap→CONFIRM, hold→usuń) bezpośrednio na klawiszu akcji.
       screen: [
-        { label: 'ACCEPT', variant: 'primary', onPress: () => menuOptions[mFocus]?.run() },
+        actionKey,
         { label: 'SETTINGS', onPress: onOpenSettings },
-        { label: 'MENU', supporting: '[CYCLE]', onPress: cycleMenu },
+        { label: 'MENU', supporting: '[CYCLE]', onPress: () => cycleMenu(1) },
       ],
       metal: [
         // nic nie gra → BACK świeci (do ekranu nagrywania)
@@ -835,8 +930,11 @@ export function usePlaybackScreen({
     };
   }
 
+  // Slider jak w Settings: przyciski prev/next przechodzą między nagraniami, knob (discrete) cyklą opcje menu.
   const slider: SliderConfig | undefined =
-    phase === 'LIST' ? { highlighted: true, onPrev: () => moveSel(-1), onNext: () => moveSel(1) } : undefined;
+    phase === 'LIST'
+      ? { highlighted: true, discrete: true, onPrev: () => moveSel(-1), onNext: () => moveSel(1), onAdjust: (dir) => cycleMenu(dir) }
+      : undefined;
 
   const content = (
     <>

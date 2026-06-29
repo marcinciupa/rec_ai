@@ -107,12 +107,12 @@ export async function transcribe(opts: {
 }
 
 /** Czat o pojedynczej notatce (transkrypt + historia + pytanie). */
-export async function chat(opts: { transcript: string; question: string; messages?: ChatTurn[] }): Promise<ChatResult> {
+export async function chat(opts: { transcript: string; question: string; messages?: ChatTurn[]; language?: string }): Promise<ChatResult> {
   const deviceId = await getDeviceId();
   const res = await request('/api/v1/chat', () => ({
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Device-Id': deviceId, Accept: 'application/json' },
-    body: JSON.stringify({ transcript: opts.transcript, question: opts.question, messages: opts.messages ?? [] }),
+    body: JSON.stringify({ transcript: opts.transcript, question: opts.question, messages: opts.messages ?? [], language: opts.language }),
   }));
   if (!res.ok) throw new ApiError(res.status, await parseError(res));
   return (await res.json()) as ChatResult;

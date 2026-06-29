@@ -20,6 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { color, font, screen, textShadow, ThemeName } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
+import { APP_VERSION } from '../version';
 
 const SETTINGS_KEY = 'recai.settings.v1'; // trwałość ustawień (AsyncStorage; web=localStorage)
 
@@ -111,14 +112,43 @@ function Section({ header, children }: { header: string; children: ReactNode }) 
   );
 }
 
+/** Nakładka „o aplikacji" (wiersz INFO): wersja + skład techniczny. Zamyka CLOSE / fizyczny BACK. */
+function InfoDialog() {
+  const rows: [string, string][] = [
+    ['VERSION', APP_VERSION],
+    ['TRANSCRIPTION', 'deAPI · WHISPER'],
+    ['CHAT', 'OPENROUTER'],
+    ['PACKAGE', 'com.glue010.recai'],
+  ];
+  const body = { fontFamily: font.monoBody.family, fontSize: font.monoBody.size } as const;
+  const cap = { fontFamily: font.caption.family, fontSize: font.caption.size } as const;
+  return (
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+      <View style={{ alignSelf: 'stretch', backgroundColor: 'rgba(26,26,26,0.95)', borderWidth: 1, borderColor: screen.olive.primary, borderRadius: 4, padding: 16, gap: 8, boxShadow: '0px 0px 8px 0px rgba(226,255,228,0.25)' } as any}>
+        <Text style={{ ...body, fontSize: font.monoHeading.size, color: screen.olive.primary, textAlign: 'center', ...phosphorGlow }}>REC_AI</Text>
+        <Text style={{ ...cap, color: screen.olive.secondary, textAlign: 'center' }}>SKEUOMORPHIC VOICE NOTES + AI</Text>
+        <View style={{ height: 1, alignSelf: 'stretch', backgroundColor: screen.olive.inactive, marginVertical: 4 }} />
+        {rows.map(([k, v]) => (
+          <View key={k} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 16 }}>
+            <Text style={{ ...body, color: screen.olive.secondary }}>{k}</Text>
+            <Text style={{ ...body, color: screen.olive.primary }}>{v}</Text>
+          </View>
+        ))}
+        <Text style={{ ...cap, color: screen.olive.inactive, textAlign: 'center', marginTop: 4 }}>© 2026 · CLOSE / BACK TO RETURN</Text>
+      </View>
+    </View>
+  );
+}
+
 /**
  * Czy sprzęt nagrywa w stereo. Na razie mock (na webie brak detekcji; docelowo z natywnego API).
  * Gdy false → RECORD MONO wymuszony ON i zablokowany (wartość w kolorze inactive).
  */
 const STEREO_CAPABLE = true;
 
-/** Element ustawienia: etykieta + lista wartości + indeks bieżącej. `locked` = nie do zmiany (wartość wygaszona). */
-type Item = { label: string; options: string[]; value: number; locked?: boolean };
+/** Element ustawienia: etykieta + lista wartości + indeks bieżącej. `locked` = nie do zmiany (wartość wygaszona).
+ *  `action` = wiersz-akcja (np. INFO): CHANGE/tap/knob nie cyklują wartości, tylko odpalają nakładkę. */
+type Item = { label: string; options: string[]; value: number; locked?: boolean; action?: boolean };
 type SectionData = { header: string; items: Item[] };
 
 /** Stan początkowy (wartości jak w Figmie). Większość to przełącznik OFF/ON. */
@@ -136,6 +166,8 @@ const INITIAL_SECTIONS: SectionData[] = [
     header: 'PLAYBACK',
     items: [
       { label: 'AUTO TRANSCRIBE', options: ['OFF', 'ON'], value: 1 },
+      // język pytań i odpowiedzi AI (czat). Domyślnie ENGLISH.
+      { label: 'AI LANGUAGE', options: ['ENGLISH', 'POLISH'], value: 0 },
       { label: 'SHOW TIME LEFT', options: ['OFF', 'ON'], value: 0 },
     ],
   },
@@ -147,6 +179,8 @@ const INITIAL_SECTIONS: SectionData[] = [
       { label: 'MOTION', options: ['OFF', 'ON'], value: 1 },
       { label: 'REC AS START PAGE', options: ['OFF', 'ON'], value: 0 },
       { label: 'LEFT-HANDED MODE', options: ['OFF', 'ON'], value: 0 },
+      // wiersz-akcja: otwiera dialog z informacjami o aplikacji (wersja, AI itp.)
+      { label: 'INFO', options: ['VIEW'], value: 0, action: true },
     ],
   },
 ];
@@ -174,6 +208,7 @@ export function useSettingsScreen({
 }: { onClose?: () => void; mode?: Mode; onCycleMode?: () => void } = {}) {
   const [sections, setSections] = useState<SectionData[]>(INITIAL_SECTIONS);
   const [selected, setSelected] = useState(0); // indeks w spłaszczonej liście; domyślnie pierwszy
+  const [infoOpen, setInfoOpen] = useState(false); // nakładka „o aplikacji" (wiersz INFO)
   const hydrated = useRef(false); // czy wczytano zapisane ustawienia
 
   // wczytaj zapisane wartości po starcie (mapa label→value), z poszanowaniem locked
@@ -236,6 +271,18 @@ export function useSettingsScreen({
 
   // Zaznaczenie w dół / w górę (z zawijaniem). NEXT[CYCLE] i przycisk fwd → dół; prev → góra.
   const move = (dir: -1 | 1) => setSelected((i) => (i + dir + TOTAL_ITEMS) % TOTAL_ITEMS);
+  const flatItems = sections.flatMap((s) => s.items); // spłaszczona lista (do wykrycia wiersza-akcji)
+  const openInfo = () => setInfoOpen(true);
+  const closeInfo = () => setInfoOpen(false);
+  // Settery „po etykiecie" — używane przez welcome screen (te same ustawienia, podgląd na żywo).
+  const optionOf = (label: string) => { const it = flatItems.find((i) => i.label === label); return it ? it.options[it.value] : ''; };
+  const cycleByLabel = (label: string) =>
+    setSections((prev) =>
+      prev.map((sec) => ({
+        ...sec,
+        items: sec.items.map((it) => (it.label === label && !it.locked ? { ...it, value: (it.value + 1) % it.options.length } : it)),
+      }))
+    );
 
   // Zmiana wartości elementu o indeksie `idx` o `dir` opcji (locked → bez zmian).
   const changeAt = (idx: number, dir: -1 | 1) =>
@@ -251,8 +298,11 @@ export function useSettingsScreen({
         }),
       }));
     });
-  // CHANGE / wychylenie slidera → zmiana zaznaczonego.
-  const changeBy = (dir: -1 | 1) => changeAt(selected, dir);
+  // CHANGE / wychylenie slidera → zmiana zaznaczonego (a dla wiersza-akcji: odpalenie nakładki).
+  const changeBy = (dir: -1 | 1) => {
+    if (flatItems[selected]?.action) { openInfo(); return; }
+    changeAt(selected, dir);
+  };
   // Ustaw FULLSCREEN wprost (np. z gestu pinch na ekranie) — trzyma synchronizację z przełącznikiem.
   const setFullscreen = (on: boolean) =>
     setSections((prev) =>
@@ -261,34 +311,44 @@ export function useSettingsScreen({
         items: sec.items.map((it) => (it.label === 'FULLSCREEN' ? { ...it, value: on ? 1 : 0 } : it)),
       }))
     );
-  // Tap w wiersz → zaznacz i przełącz jego wartość na następną.
+  // Tap w wiersz → zaznacz i przełącz wartość (a dla wiersza-akcji: odpal nakładkę).
   const tapRow = (idx: number) => {
     setSelected(idx);
+    if (flatItems[idx]?.action) { openInfo(); return; }
     changeAt(idx, 1);
   };
 
-  const keyboard: KeyboardConfig = {
-    screen: [
-      { label: 'CHANGE', variant: 'primary', onPress: () => changeBy(1) },
-      { label: '' },
-      { label: 'NEXT', supporting: '[CYCLE]', onPress: () => move(1) },
-    ],
-    metal: [
-      // metal[0] = stały fizyczny STOP/BACK; w ustawieniach STOP zgaszony, BACK świeci (wyjście do poprz. ekranu)
-      stopBackKey({ canStop: false, onBack: onClose }),
-      { type: 'record' },
-      { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
-    ],
-  };
+  const keyboard: KeyboardConfig = infoOpen
+    ? {
+        // nakładka INFO: CLOSE (lub fizyczny BACK) zamyka dialog
+        screen: [{ label: 'CLOSE', variant: 'primary', onPress: closeInfo }, { label: '' }, { label: '' }],
+        metal: [stopBackKey({ canStop: false, onBack: closeInfo }), { type: 'record' }, { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+      }
+    : {
+        screen: [
+          { label: 'CHANGE', variant: 'primary', onPress: () => changeBy(1) },
+          { label: '' },
+          { label: 'NEXT', supporting: '[CYCLE]', onPress: () => move(1) },
+        ],
+        metal: [
+          // metal[0] = stały fizyczny STOP/BACK; w ustawieniach STOP zgaszony, BACK świeci (wyjście do poprz. ekranu)
+          stopBackKey({ canStop: false, onBack: onClose }),
+          { type: 'record' },
+          { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
+        ],
+      };
 
   // Slider podświetlony i aktywny: prev/next wybierają element listy, knob zmienia parametr.
-  const slider = {
-    highlighted: true,
-    discrete: true, // ustawienia: knob dyskretny (zmiana o krok przy 10% wychylenia), bez narastania
-    onPrev: () => move(-1),
-    onNext: () => move(1),
-    onAdjust: (dir: -1 | 1) => changeBy(dir),
-  };
+  // przy otwartym dialogu INFO slider nieaktywny (nie ruszamy listy pod nakładką)
+  const slider = infoOpen
+    ? { highlighted: false }
+    : {
+        highlighted: true,
+        discrete: true, // ustawienia: knob dyskretny (zmiana o krok przy 10% wychylenia), bez narastania
+        onPrev: () => move(-1),
+        onNext: () => move(1),
+        onAdjust: (dir: -1 | 1) => changeBy(dir),
+      };
 
   const content = (
     <>
@@ -335,6 +395,7 @@ export function useSettingsScreen({
       </ScrollView>
 
       <BottomBar />
+      {infoOpen ? <InfoDialog /> : null}
     </>
   );
 
@@ -352,6 +413,8 @@ export function useSettingsScreen({
   const autoTranscribe = atItem ? atItem.options[atItem.value] === 'ON' : false;
   const rmItem = flat.find((it) => it.label === 'RECORD MONO');
   const recordMono = rmItem ? rmItem.options[rmItem.value] === 'ON' : false;
+  const langItem = flat.find((it) => it.label === 'AI LANGUAGE');
+  const language = (langItem ? langItem.options[langItem.value] : 'ENGLISH') === 'POLISH' ? 'pl' : 'en';
 
-  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono };
+  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, language, optionOf, cycleByLabel };
 }

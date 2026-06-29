@@ -11,7 +11,7 @@
  *   └─ LowerMic
  */
 import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, View, PanResponder, Platform } from 'react-native';
+import { Animated, Image, View, PanResponder, Platform, Keyboard as RNKeyboard } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { dims, gradient, themes, ThemeName } from '../../theme/tokens';
 import { ThemeProvider, useTheme } from '../../theme/ThemeContext';
@@ -41,6 +41,7 @@ function Body({
   motion,
   keyboard,
   slider,
+  hideControls,
   onPinch,
   children,
 }: {
@@ -50,6 +51,7 @@ function Body({
   motion?: boolean;
   keyboard?: KeyboardConfig;
   slider?: SliderConfig;
+  hideControls?: boolean; // tryb pisania w czacie: chowa dolną obudowę (slider+klawiatura+dolny mic) pod klawiaturę systemową
   onPinch?: (dir: 'in' | 'out') => void;
   children?: ReactNode;
 }) {
@@ -126,6 +128,15 @@ function Body({
   // (micH = górny pas, screenH = szyba) — reszta to sekcja dolna.
   const [micH, setMicH] = useState(0);
   const [screenH, setScreenH] = useState(0);
+  // tryb pisania w czacie: dolna sekcja obudowy = wysokość systemowej klawiatury (leży POD klawiaturą na osi Z).
+  // Po schowaniu klawiatury kbH→0 i sekcja wraca do normalnego układu (slider+klawiatura+mic).
+  const [kbH, setKbH] = useState(0);
+  useEffect(() => {
+    if (!hideControls) { setKbH(0); return; }
+    const show = RNKeyboard.addListener('keyboardDidShow', (e) => setKbH(e.endCoordinates?.height ?? 0));
+    const hide = RNKeyboard.addListener('keyboardDidHide', () => setKbH(0));
+    return () => { show.remove(); hide.remove(); };
+  }, [hideControls]);
   return (
     <BlinkProvider active={!!recording}>
     <TiltProvider value={tiltValue}>
@@ -179,19 +190,21 @@ function Body({
       >
         <UpperMic variant={variant} recording={recording} muted={muted} />
       </View>
-      {/* interaction_area */}
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' }}>
-        {/* szyba — mierzymy wysokość, żeby wiedzieć gdzie kończy się ekran (start dolnej sekcji) */}
-        <View
-          style={{ flex: 1, alignSelf: 'stretch' }}
-          onLayout={(e) => setScreenH(e.nativeEvent.layout.height)}
-        >
-          <Display>{children}</Display>
-        </View>
+      {/* szyba — flex:1 wypełnia obszar nad dolną sekcją; mierzymy wysokość (start dolnej sekcji, bevel) */}
+      <View
+        style={{ flex: 1, alignSelf: 'stretch' }}
+        onLayout={(e) => setScreenH(e.nativeEvent.layout.height)}
+      >
+        <Display>{children}</Display>
+      </View>
+      {/* dolna sekcja obudowy (slider + klawiatura + dolny mik). W trybie pisania NIE znika — przycina się
+          do wysokości klawiatury systemowej (kbH), nad którą OS rysuje swoją klawiaturę; po jej schowaniu
+          (kbH→0 / wyjście z trybu) wraca do pełnej, domyślnej wysokości. */}
+      <View style={[{ alignSelf: 'stretch', alignItems: 'center' }, hideControls && kbH > 0 ? { height: kbH, overflow: 'hidden' } : null]}>
         <SeekSlider config={slider} />
         <Keyboard config={keyboard} />
+        <LowerMic />
       </View>
-      <LowerMic />
       {/* BEVEL OBUDOWY (Figma 160:2195 stroke-light/stroke-shadow). micH = pas górny, screenH = szyba.
           Guard tylko na screenH (w fullscreen na web micH=0 — brak statusbara — a linie i tak mają być). */}
       {screenH > 0 && (
@@ -257,6 +270,7 @@ export function DeviceShell({
   motion = false,
   keyboard,
   slider,
+  hideControls,
   onPinch,
   children,
 }: {
@@ -267,6 +281,7 @@ export function DeviceShell({
   motion?: boolean;
   keyboard?: KeyboardConfig;
   slider?: SliderConfig;
+  hideControls?: boolean;
   onPinch?: (dir: 'in' | 'out') => void;
   children?: ReactNode;
 }) {
@@ -289,6 +304,7 @@ export function DeviceShell({
             motion={motion}
             keyboard={keyboard}
             slider={slider}
+            hideControls={hideControls}
             onPinch={onPinch}
           >
             {children}
@@ -311,6 +327,7 @@ export function DeviceShell({
             motion={motion}
             keyboard={keyboard}
             slider={slider}
+            hideControls={hideControls}
             onPinch={onPinch}
           >
             {children}

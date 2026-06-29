@@ -21,6 +21,7 @@ export type ScreenKeyDef = {
   onHoldComplete?: () => void;
   onHoldStart?: () => void;
   holdMs?: number;
+  progress?: number; // statyczny pierścień 0..1 (np. bieg prędkości na SPEED)
 };
 /** Definicja klawisza "metal" (dolny rząd): etykietowany albo przycisk record. */
 export type MetalKeyDef =
@@ -83,6 +84,7 @@ export function Keyboard({ config = EMPTY_KEYBOARD }: { config?: KeyboardConfig 
               onHoldComplete={k.onHoldComplete}
               onHoldStart={k.onHoldStart}
               holdMs={k.holdMs}
+              progress={k.progress}
             />
           ))}
         </Row>

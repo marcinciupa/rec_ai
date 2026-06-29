@@ -1,15 +1,14 @@
 /**
- * ChatView — czat o notatce (pod-widok PLAYBACK). Wiadomości w stylu fosforu, 3 gotowe pytania
- * (SUMMARY / KEY POINTS / TASKS) na rzędzie "screen". Pytanie GŁOSEM jest na fizycznym klawiszu ⏺ (RECORD):
- * w czacie ⏺ = nagraj pytanie (App nie nadpisuje go na „nowe nagranie", bo ma własny onPress). Trwała
- * podpowiedź pod nagłówkiem (czerwona kropka + „TAP ⏺ TO ASK BY VOICE") informuje o tej roli klawisza.
+ * ChatView — czat o notatce (pod-widok PLAYBACK). Wiadomości w stylu fosforu. Rząd "screen" (Figma 289:6298):
+ * KEYBOARD (systemowa klawiatura) · SUMMARY · KEY POINTS. Pytanie GŁOSEM na fizycznym ⏺ (RECORD).
  *
- * Głos: tap ⏺ → nagrywaj → STOP (metal) → transkrypcja pytania (api.transcribe) → wyślij do /chat.
- * Metal stały: STOP/BACK · ⏺ · PLAY/PAUSE (wygaszony — brak odtwarzania w czacie).
+ * Pisanie: KEYBOARD → tryb `typing`: pole TextInput + systemowa klawiatura; App chowa dolną obudowę
+ * (slider/klawiatura/mic) i wchodzi w fullscreen (ekran do górnej krawędzi klawiatury). ENTER/SEND wysyła,
+ * blur kończy pisanie i wraca do poprzedniego widoku. Głos: tap ⏺ → STOP → api.transcribe → /chat.
  * Wymaga notatki z transkryptem (wejście tylko dla transcribed+uri) — patrz PlaybackScreen.
  */
-import { useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView } from 'react-native';
+import { ReactNode, useEffect, useRef, useState } from 'react';
+import { View, Text, ScrollView, TextInput, Keyboard } from 'react-native';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
@@ -20,11 +19,27 @@ import { useAudioCapture } from '../hooks/useAudioCapture';
 import * as api from '../lib/api';
 import { deleteRecordingFile } from '../lib/recordingFiles';
 
-const PRESETS: { label: string; q: string }[] = [
-  { label: 'SUM-\nMARY', q: 'Streść tę notatkę w kilku zdaniach.' },
-  { label: 'KEY\nPOINTS', q: 'Wypisz najważniejsze punkty tej notatki w formie krótkiej listy.' },
-  { label: 'TASKS', q: 'Wypisz konkretne zadania (action items) wynikające z tej notatki.' },
-];
+// Presety pytań per język (label klawisza stały; treść pytania w wybranym języku).
+const PRESETS_BY_LANG: Record<string, { label: string; q: string }[]> = {
+  en: [
+    { label: 'SUM-\nMARY', q: 'Summarize this note in a few sentences.' },
+    { label: 'KEY\nPOINTS', q: 'List the most important points of this note as a short bullet list.' },
+    { label: 'TASKS', q: 'List the concrete action items from this note.' },
+  ],
+  pl: [
+    { label: 'SUM-\nMARY', q: 'Streść tę notatkę w kilku zdaniach.' },
+    { label: 'KEY\nPOINTS', q: 'Wypisz najważniejsze punkty tej notatki w formie krótkiej listy.' },
+    { label: 'TASKS', q: 'Wypisz konkretne zadania (action items) wynikające z tej notatki.' },
+  ],
+};
+
+// Wiadomość powitalna (pierwszy „dymek" asystenta, gdy brak historii) — Figma 289:6298. „•REC" (glif kropki,
+// jak w projekcie) renderowane czerwienią; reszta phosphor. Tekst rozbity wokół „•REC" na pre/post, per język.
+const REC_TOKEN = '•REC';
+const WELCOME_BY_LANG: Record<string, { pre: string; post: string }> = {
+  en: { pre: 'Hi! Ask me about this note — pick an option above, tap KEYBOARD to type, or press ', post: ' to ask with your voice.' },
+  pl: { pre: 'Cześć! Zapytaj o tę notatkę — wybierz opcję powyżej, użyj KEYBOARD, by pisać, albo wciśnij ', post: ', by zapytać głosem.' },
+};
 
 const glow = (c: string) => ({ textShadowColor: c, textShadowRadius: 4, textShadowOffset: { width: 0, height: 0 } });
 const PHOSPHOR_GLOW = glow('rgba(226,255,228,0.25)');
@@ -32,7 +47,7 @@ const PHOSPHOR_GLOW = glow('rgba(226,255,228,0.25)');
 type Voice = 'idle' | 'listening' | 'transcribing';
 
 /** Dymek wiadomości: asystent = fosfor po lewej; użytkownik = pastylka fosforowa po prawej (ciemny tekst). */
-function Bubble({ turn }: { turn: ChatTurn }) {
+function Bubble({ turn, rich }: { turn: ChatTurn; rich?: ReactNode }) {
   const isUser = turn.role === 'user';
   return (
     <View style={{ flexDirection: 'row', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
@@ -44,8 +59,6 @@ function Bubble({ turn }: { turn: ChatTurn }) {
             paddingHorizontal: 8,
             paddingVertical: 4,
             backgroundColor: isUser ? screen.olive.primary : 'transparent',
-            borderWidth: isUser ? 0 : 1,
-            borderColor: screen.olive.inactive,
             ...(isUser ? { boxShadow: '0px 0px 4px 0px rgba(226,255,228,0.25)' } : null),
           } as any
         }
@@ -58,7 +71,7 @@ function Bubble({ turn }: { turn: ChatTurn }) {
             ...(isUser ? null : PHOSPHOR_GLOW),
           }}
         >
-          {turn.content}
+          {rich ?? turn.content}
         </Text>
       </View>
     </View>
@@ -87,22 +100,52 @@ export function useChatView({
   active,
   mode = 'PLAYBACK',
   mono = false,
+  language = 'en',
+  nameLabel = '',
+  onTypingChange,
   onBack,
 }: {
   rec?: Rec;
   active: boolean;
   mode?: Mode;
   mono?: boolean;
+  language?: string;
+  nameLabel?: string; // „nazwa (rozmiar)" wyświetlana pod chatem (Figma 289:6298)
+  onTypingChange?: (on: boolean) => void; // wejście/wyjście trybu pisania (klawiatura systemowa → fullscreen)
   onBack?: () => void;
 }) {
-  const chat = useChat(active ? rec?.id : undefined);
+  const chat = useChat(active ? rec?.id : undefined, language);
+  const PRESETS = PRESETS_BY_LANG[language] ?? PRESETS_BY_LANG.en;
+  const welcome = WELCOME_BY_LANG[language] ?? WELCOME_BY_LANG.en;
   const capture = useAudioCapture();
   const [voice, setVoice] = useState<Voice>('idle');
   const scrollRef = useRef<ScrollView>(null);
-
-  // auto-scroll na dół przy nowej wiadomości / zmianie stanu
+  // tryb pisania: pole tekstowe + systemowa klawiatura; App chowa dolną obudowę i wchodzi w fullscreen
+  const [typing, setTyping] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef<TextInput>(null);
+  useEffect(() => { onTypingChange?.(typing); }, [typing, onTypingChange]);
+  // wyjście z czatu (lub start nagrywania głosem) → opuść tryb pisania
+  useEffect(() => { if ((!active || voice !== 'idle') && typing) setTyping(false); }, [active, voice, typing]);
+  // schowanie systemowej klawiatury (Android adjustNothing nie woła onBlur) → wyjście z trybu pisania,
+  // żeby dolna obudowa wróciła do normalnego układu (slider + klawiatura + mik).
   useEffect(() => {
-    const t = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
+    if (!typing) return;
+    const sub = Keyboard.addListener('keyboardDidHide', () => { setTyping(false); inputRef.current?.blur(); });
+    return () => sub.remove();
+  }, [typing]);
+  const openKeyboard = () => { setTyping(true); inputRef.current?.focus(); };
+  const sendDraft = () => {
+    const q = draft.trim();
+    if (!q) return;
+    chat.ask(q);
+    setDraft('');
+  };
+
+  // pokazujemy tylko ostatnią parę: ostatnie pytanie usera (góra) + odpowiedź na nie (pod spodem) →
+  // scroll na górę, żeby pytanie było widoczne przy nowej wiadomości / zmianie stanu
+  useEffect(() => {
+    const t = setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 50);
     return () => clearTimeout(t);
   }, [chat.messages.length, chat.phase, voice]);
 
@@ -135,7 +178,7 @@ export function useChatView({
       return;
     }
     try {
-      const res = await api.transcribe({ uri: captured.uri, recordingId: `q_${Date.now()}` });
+      const res = await api.transcribe({ uri: captured.uri, recordingId: `q_${Date.now()}`, language });
       const q = (res.transcript || '').replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim();
       setVoice('idle');
       if (q) chat.ask(q);
@@ -175,56 +218,78 @@ export function useChatView({
       metal: [stopBackKey({ canStop: false, onBack }), recordAsk, playPauseOff],
     };
   } else {
+    // KEYBOARD (otwiera systemową klawiaturę) + 2 presety (SUMMARY / KEY POINTS) — Figma 289:6298.
     keyboard = {
-      screen: PRESETS.map((p, i) => ({ label: p.label, variant: i === 0 ? ('primary' as const) : undefined, onPress: () => chat.ask(p.q) })),
+      screen: [
+        { label: 'KEY-\nBOARD', variant: 'primary' as const, onPress: openKeyboard },
+        ...PRESETS.slice(0, 2).map((p) => ({ label: p.label, onPress: () => chat.ask(p.q) })),
+      ],
       metal: [stopBackKey({ canStop: false, onBack }), recordAsk, playPauseOff],
     };
   }
 
-  const empty = chat.messages.length === 0 && !busy && voice === 'idle';
+  // kontener pokazuje tylko ostatnią parę: ostatnie pytanie usera (góra) + odpowiedź na nie (pod spodem).
+  const msgs = chat.messages;
+  let lastUserIdx = -1;
+  let lastAsstIdx = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (lastUserIdx < 0 && msgs[i].role === 'user') lastUserIdx = i;
+    if (lastAsstIdx < 0 && msgs[i].role === 'assistant') lastAsstIdx = i;
+    if (lastUserIdx >= 0 && lastAsstIdx >= 0) break;
+  }
+  const lastUser = lastUserIdx >= 0 ? msgs[lastUserIdx] : null;
+  const lastAnswer = lastAsstIdx > lastUserIdx ? msgs[lastAsstIdx] : null; // odpowiedź dotyczy ostatniego pytania
+
   const content = (
     <>
       <ScreenTopBar mode={mode} onCycleMode={undefined} ai={ai} labelActive={busy || voice === 'listening'} />
       <View style={{ flex: 1, alignSelf: 'stretch', paddingHorizontal: 16, paddingTop: 8 }}>
-        <Text
-          numberOfLines={1}
-          style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}
-        >
-          {`CHAT — ${rec?.title ?? 'NOTE'}`}
-        </Text>
-        {/* trwała podpowiedź: realna czerwona kropka = klawisz ⏺, który w czacie zadaje pytanie głosem */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2, marginBottom: 8 }}>
-          <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>TAP</Text>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color.recordRed }} />
-          <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>TO ASK BY VOICE</Text>
-        </View>
         <ScrollView
           ref={scrollRef}
           style={{ flex: 1, alignSelf: 'stretch' }}
           contentContainerStyle={{ gap: 8, paddingBottom: 8 }}
           showsVerticalScrollIndicator={false}
         >
-          {empty ? (
-            <Text
-              style={{
-                fontFamily: font.caption.family,
-                fontSize: font.caption.size,
-                color: screen.olive.inactive,
-                textAlign: 'center',
-                marginTop: 24,
-              }}
-            >
-              ASK ABOUT THIS NOTE — TAP A PRESET, OR THE RECORD KEY TO ASK BY VOICE.
-            </Text>
+          {/* brak historii → wiadomość powitalna (Figma 289:6298); „•REC" czerwienią (jak w projekcie) */}
+          {msgs.length === 0 ? (
+            <Bubble
+              turn={{ role: 'assistant', content: `${welcome.pre}${REC_TOKEN}${welcome.post}` }}
+              rich={<>{welcome.pre}<Text style={{ color: color.recordRed }}>{REC_TOKEN}</Text>{welcome.post}</>}
+            />
           ) : null}
-          {chat.messages.map((m, i) => (
-            <Bubble key={i} turn={m} />
-          ))}
+          {/* ostatnie pytanie usera (góra) + odpowiedź na nie (pod spodem) */}
+          {lastUser ? <Bubble turn={lastUser} /> : null}
+          {lastAnswer ? <Bubble turn={lastAnswer} /> : null}
           {voice === 'listening' ? <StatusLine text="LISTENING… TAP STOP" tone="red" /> : null}
           {voice === 'transcribing' ? <StatusLine text="READING QUESTION…" tone="phosphor" /> : null}
           {chat.phase === 'thinking' ? <StatusLine text="THINKING…" tone="phosphor" /> : null}
           {chat.phase === 'error' ? <StatusLine text={`ERROR: ${chat.error ?? 'try again'}`} tone="red" /> : null}
         </ScrollView>
+        {/* pole tekstowe (Figma 289:5603): jasna pigułka phosphor + ciemny mono; systemowa klawiatura.
+            Widoczne tylko w trybie pisania; ENTER/SEND wysyła i czyści, blur kończy pisanie. */}
+        {typing ? (
+          <View style={{ alignSelf: 'stretch', backgroundColor: screen.olive.primary, borderRadius: 2, padding: 4, marginTop: 8, boxShadow: '0px 0px 4px 0px rgba(226,255,228,0.25)' } as any}>
+            <TextInput
+              ref={inputRef}
+              autoFocus
+              value={draft}
+              onChangeText={setDraft}
+              onSubmitEditing={sendDraft}
+              onBlur={() => setTyping(false)}
+              blurOnSubmit={false}
+              placeholder="Start typing..."
+              placeholderTextColor={color.dark21}
+              returnKeyType="send"
+              style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, color: color.dark21, padding: 0 } as any}
+            />
+          </View>
+        ) : null}
+        {/* nazwa pliku (+rozmiar) i storage POD chatem (Figma 289:6298) — wyśrodkowane, przyciemnione */}
+        {/* nazwa (+rozmiar) i wolne miejsce w JEDNEJ linii (Figma 289:6298) — nazwa lewo, storage prawo */}
+        <View style={{ alignSelf: 'stretch', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
+          <Text numberOfLines={1} style={{ flexShrink: 1, fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>{nameLabel}</Text>
+          <Text numberOfLines={1} style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>~311h/32.3GB AVAILABLE</Text>
+        </View>
       </View>
       <BottomBar active={voice === 'listening'} mono={mono} muted={false} level={voice === 'listening' ? capture.level : null} />
     </>

@@ -10,9 +10,11 @@ import {
 } from '@expo-google-fonts/inter';
 import { KodeMono_400Regular, KodeMono_700Bold } from '@expo-google-fonts/kode-mono';
 import * as SplashScreen from 'expo-splash-screen';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceShell } from './src/components/chrome/DeviceShell';
 import { KeyboardConfig } from './src/components/chrome/Keyboard';
 import { useSettingsScreen } from './src/screens/SettingsScreen';
+import { WelcomeDialog } from './src/screens/WelcomeDialog';
 import { useRecordingScreen } from './src/screens/RecordingScreen';
 import { usePlaybackScreen } from './src/screens/PlaybackScreen';
 import { useRecordings } from './src/hooks/useRecordings';
@@ -49,6 +51,19 @@ export default function App() {
   const closeSettings = () => setMode(prevModeRef.current);
   // po zapisaniu nagrania PLAY przenosi do PLAYBACK i otwiera player tego pliku (autostart)
   const [pendingPlay, setPendingPlay] = useState<string | null>(null);
+  // czat → tryb pisania: klawiatura systemowa, fullscreen + schowana dolna obudowa (slider/klawiatura/mic)
+  const [chatTyping, setChatTyping] = useState(false);
+  // onboarding (pierwsze uruchomienie): pytamy o domyślny język/motyw/fullscreen. null = jeszcze nie sprawdzono.
+  const [showWelcome, setShowWelcome] = useState<boolean | null>(null);
+  useEffect(() => {
+    AsyncStorage.getItem('recai.welcome.v1')
+      .then((v) => setShowWelcome(!v))
+      .catch(() => setShowWelcome(false));
+  }, []);
+  const finishWelcome = () => {
+    AsyncStorage.setItem('recai.welcome.v1', '1').catch(() => {});
+    setShowWelcome(false);
+  };
 
   // Wspólny store nagrań — dzielony przez nagrywanie (zapis) i playback (lista).
   const recStore = useRecordings();
@@ -75,6 +90,8 @@ export default function App() {
   const playback = usePlaybackScreen({
     store: recStore,
     mono: settings.recordMono,
+    language: settings.language,
+    onTyping: setChatTyping,
     mode,
     onCycleMode: cycleMode,
     onOpenSettings: () => setMode('SETTINGS'),
@@ -83,7 +100,8 @@ export default function App() {
     pendingPlayId: pendingPlay,
     onConsumePending: () => setPendingPlay(null),
   });
-  const variant = settings.fullscreen ? 'fullscreen' : 'device';
+  // tryb pisania w czacie wymusza fullscreen + schowaną dolną obudowę; po wyjściu wraca do ustawienia użytkownika
+  const variant = settings.fullscreen || chatTyping ? 'fullscreen' : 'device';
 
   // Systemowy back (Android): playback(panel→lista→nagrywanie), settings→nagrywanie, nagrywanie→wyjście.
   const backRef = useRef<() => boolean>(() => false);
@@ -182,11 +200,14 @@ export default function App() {
           motion={settings.motion}
           keyboard={keyboard}
           slider={slider}
+          hideControls={chatTyping}
           onPinch={(dir) => settings.setFullscreen(dir === 'out')}
         >
           {content}
         </DeviceShell>
       </View>
+
+      {showWelcome ? <WelcomeDialog optionOf={settings.optionOf} cycleByLabel={settings.cycleByLabel} onFinish={finishWelcome} /> : null}
 
       <StatusBar style={barStyle} />
     </View>

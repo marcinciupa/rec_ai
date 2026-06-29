@@ -18,13 +18,16 @@ class OpenRouterClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def chat(self, *, transcript: str, history: list[dict], question: str, model: str | None = None):
+    async def chat(self, *, transcript: str, history: list[dict], question: str, model: str | None = None, language: str | None = None):
         if not self.s.openrouter_api_key:
             raise OpenRouterError("OPENROUTER_API_KEY not configured")
         model = model or self.s.llm_chat_model
+        # język odpowiedzi sterowany ustawieniem aplikacji; brak/nieznany → English (domyślny)
+        lang_name = {"en": "English", "pl": "Polish"}.get((language or "en").lower(), "English")
         system = (
             "You are REC_AI, an assistant that helps the user talk about ONE of their voice notes. "
-            "Answer in the same language as the user's question. Be concise and concrete. "
+            f"Always answer in {lang_name}, regardless of the language of the transcript or the question. "
+            "Be concise and concrete. "
             "Ground every answer ONLY in the transcript below; if the answer isn't in it, say so.\n\n"
             "TRANSCRIPT:\n" + (transcript or "(empty)")
         )

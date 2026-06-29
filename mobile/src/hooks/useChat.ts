@@ -11,10 +11,12 @@ import * as db from '../lib/db';
 export type ChatTurn = { role: 'user' | 'assistant'; content: string };
 export type ChatPhase = 'idle' | 'thinking' | 'error';
 
-export function useChat(recordingId: string | undefined) {
+export function useChat(recordingId: string | undefined, language?: string) {
   const [messages, setMessages] = useState<ChatTurn[]>([]);
   const [phase, setPhase] = useState<ChatPhase>('idle');
   const [error, setError] = useState<string | null>(null);
+  const langRef = useRef<string | undefined>(language); // język odpowiedzi AI (z ustawień)
+  langRef.current = language;
   const transcriptRef = useRef<string>('');
   const phaseRef = useRef<ChatPhase>('idle');
   phaseRef.current = phase;
@@ -57,11 +59,13 @@ export function useChat(recordingId: string | undefined) {
     setError(null);
     db.addMessage({ recordingId: id, role: 'user', content: question, createdAt: Date.now() }).catch(() => {});
     try {
-      const res = await api.chat({ transcript: transcriptRef.current, question, messages: history });
-      if (recRef.current !== id) return; // przełączono notatkę w trakcie — porzuć odpowiedź
+      const res = await api.chat({ transcript: transcriptRef.current, question, messages: history, language: langRef.current });
+      // Zapisz odpowiedź do bazy ZAWSZE — request leci w tle, więc nawet po wyjściu z czatu (lub zmianie
+      // notatki) odpowiedź trafia do historii i pokaże się po powrocie (wczytaniu z DB).
+      db.addMessage({ recordingId: id, role: 'assistant', content: res.answer, createdAt: Date.now() }).catch(() => {});
+      if (recRef.current !== id) return; // inny widok/notatka → nie ruszaj UI (odpowiedź jest już w bazie)
       setMessages((prev) => [...prev, { role: 'assistant', content: res.answer }]);
       setPhase('idle');
-      db.addMessage({ recordingId: id, role: 'assistant', content: res.answer, createdAt: Date.now() }).catch(() => {});
     } catch (e: any) {
       if (recRef.current !== id) return;
       setError(String(e?.message ?? e));
