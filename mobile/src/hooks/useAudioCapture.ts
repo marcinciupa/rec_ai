@@ -33,8 +33,14 @@ const REC_OPTIONS: any = {
 };
 
 // dBFS (~-55..0) → 0..1
-const normLevel = (db: number | null | undefined) =>
-  typeof db === 'number' && isFinite(db) ? Math.max(0, Math.min(1, (db + 55) / 55)) : null;
+// metering dBFS → 0..1 z „punchem": wyższy próg szumu (cisza ≈ 0) + gain, żeby wychylenia były AGRESYWNE
+// (mowa dobija do maksa, cisza zostaje niska — wyraźnie widać że nagrywa). Wpływa na waveform nagrywania,
+// miernik dolnego paska i zapisaną obwiednię (spójnie).
+const normLevel = (db: number | null | undefined) => {
+  if (typeof db !== 'number' || !isFinite(db)) return null;
+  const base = Math.max(0, Math.min(1, (db + 50) / 50)); // -50 dBFS → 0, 0 dBFS → 1 (próg szumu podniesiony z -55)
+  return Math.max(0, Math.min(1, base * 1.7)); // gain 1.7 → mowa szybciej dobija do pełnej wysokości słupka
+};
 
 export function useAudioCapture() {
   const recorder = useAudioRecorder(REC_OPTIONS);

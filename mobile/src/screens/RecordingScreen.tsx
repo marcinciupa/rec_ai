@@ -40,6 +40,10 @@ const today = () => {
 
 type RecState = 'READY' | 'RECORDING' | 'PAUSED' | 'SAVED';
 
+// odstęp, po którym gra buzz nagrywania — tyle, by haptik kliknięcia klawisza (press ~110 / release ~45 ms)
+// zdążył wybrzmieć, więc buzz jest ODRĘBNYM, kolejnym sygnałem (sekwencja), a nie nakładką
+const HAPTIC_AFTER_CLICK_MS = 90;
+
 const fmt = (s: number) => {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
@@ -73,7 +77,7 @@ function Waveform({ active, tint, level }: { active: boolean; tint: string; leve
       {h.map((v, i) => (
         <View
           key={i}
-          style={{ width: 3, height: active ? 4 + v * 44 : 3, borderRadius: 1.5, backgroundColor: tint }}
+          style={{ width: 3, height: active ? 4 + v * 47 : 3, borderRadius: 1.5, backgroundColor: tint }}
         />
       ))}
     </View>
@@ -217,7 +221,9 @@ export function useRecordingScreen({
     setElapsed(0);
     samplesRef.current = []; // nowa obwiednia
     setState('RECORDING');
-    hapticRecordStart(); // dłuższy buzz „zaczęło się"
+    // buzz „start" PO kliknięciu klawisza (sekwencja jak w fizycznym urządzeniu: klik → buzz). Opóźnienie,
+    // bo na Androidzie każdy Vibration.vibrate kasuje poprzedni — inaczej haptik klawisza i buzz zjadałyby się.
+    setTimeout(hapticRecordStart, HAPTIC_AFTER_CLICK_MS);
     // RECORD MODE → stereo/mono, QUALITY → jakość (bitrate); web → no-op (mock, real=false)
     const ok = await capture.start({ stereo: !mono, quality });
     // natywnie: false = odmowa mikrofonu / błąd prepare → NIE udawaj nagrywania (inaczej zapis pustego pliku)
@@ -285,7 +291,7 @@ export function useRecordingScreen({
   };
   const stop = () => {
     setAbortedFlash(false);
-    hapticRecordStop(); // podwójny buzz „koniec nagrania"
+    setTimeout(hapticRecordStop, HAPTIC_AFTER_CLICK_MS); // podwójny buzz „koniec" PO kliknięciu (sekwencja, nie nakładka)
     setState('SAVED');
     saveRecording(elapsed); // async: zapis pliku + (gdy AUTO TRANSCRIBE) realna transkrypcja przez manager
     // „STOPPED AND SAVED" przez 3 s, potem auto-powrót do ready (chyba że odpalisz podgląd PLAY)
