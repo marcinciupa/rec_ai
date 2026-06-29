@@ -32,8 +32,18 @@ const phosphorGlow = {
 
 // długie pojedyncze słowa na labelach klawiszy → ręczny podział na 2 linie z dywizem
 // (jak RECORD-\nINGS / TRANS-\nCRIBE). Patrz memory feedback_key_label_wrap.
-const KEY_WRAP: Record<string, string> = { REMAINING: 'REMAIN-\nING', FULLSCREEN: 'FULL-\nSCREEN' };
+const KEY_WRAP: Record<string, string> = { REMAINING: 'REMAIN-\nING', FULLSCREEN: 'FULL-\nSCREEN', 'SYSTEM DEFAULT': 'SYSTEM\nDEFAULT' };
 const keyWrap = (s: string) => KEY_WRAP[s] ?? s;
+
+// język UI z systemu (gdy UI LANGUAGE = SYSTEM DEFAULT). Intl (Hermes) → kod języka; fallback EN.
+const systemLang = (): 'en' | 'pl' => {
+  try {
+    const loc = (Intl as any)?.DateTimeFormat?.().resolvedOptions?.().locale ?? 'en';
+    return String(loc).toLowerCase().startsWith('pl') ? 'pl' : 'en';
+  } catch {
+    return 'en';
+  }
+};
 
 /** Nagłówek sekcji (RECORDING / PLAYBACK / OTHER) — wyśrodkowany, phosphor. */
 function SectionHeader({ children }: { children: ReactNode }) {
@@ -129,10 +139,9 @@ function InfoDialog() {
   const cap = { fontFamily: font.caption.family, fontSize: font.caption.size } as const;
   return (
     <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, backgroundColor: 'rgba(0,0,0,0.5)' }}>
-      <View style={{ alignSelf: 'stretch', backgroundColor: 'rgba(26,26,26,0.95)', borderWidth: 1, borderColor: screen.olive.primary, borderRadius: 4, padding: 16, gap: 8, boxShadow: '0px 0px 8px 0px rgba(226,255,228,0.25)' } as any}>
+      <View style={{ alignSelf: 'stretch', backgroundColor: color.dark1A, borderWidth: 1, borderColor: screen.olive.primary, borderRadius: 4, padding: 16, gap: 8, boxShadow: '0px 0px 8px 0px rgba(226,255,228,0.25)' } as any}>
         <Text style={{ ...body, fontSize: font.monoHeading.size, color: screen.olive.primary, textAlign: 'center', ...phosphorGlow }}>REC_AI</Text>
         <Text style={{ ...cap, color: screen.olive.secondary, textAlign: 'center' }}>SKEUOMORPHIC VOICE NOTES + AI</Text>
-        <View style={{ height: 1, alignSelf: 'stretch', backgroundColor: screen.olive.inactive, marginVertical: 4 }} />
         {rows.map(([k, v]) => (
           <View key={k} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 16 }}>
             <Text style={{ ...body, color: screen.olive.secondary }}>{k}</Text>
@@ -182,6 +191,9 @@ const INITIAL_SECTIONS: SectionData[] = [
     header: 'OTHER',
     items: [
       { label: 'THEME', options: ['LIGHT', 'DARK', 'ORANGE', 'NAVY'], value: 0 },
+      // język interfejsu (osobny od AI LANGUAGE). SYSTEM DEFAULT = język z systemu. INFRA: na main brak
+      // jeszcze warstwy tłumaczeń (i18n) → uiLang gotowy, ale UI zostaje EN do czasu nałożenia i18n.
+      { label: 'UI LANGUAGE', options: ['SYSTEM DEFAULT', 'ENGLISH', 'POLISH'], value: 0 },
       { label: 'VIEW', options: ['DEVICE', 'FULLSCREEN'], value: 0 },
       { label: 'MOTION', options: ['OFF', 'ON'], value: 1 },
       { label: 'HANDED', options: ['RIGHT', 'LEFT'], value: 0 },
@@ -453,6 +465,10 @@ export function useSettingsScreen({
   const showTimeLeft = ptItem ? ptItem.options[ptItem.value] === 'REMAINING' : false;
   const ksoItem = flat.find((it) => it.label === 'KEEP SCREEN ON');
   const keepScreenOn = ksoItem ? ksoItem.options[ksoItem.value] === 'ON' : false;
+  // język interfejsu (SYSTEM DEFAULT → z systemu). INFRA: nic na main jeszcze nie konsumuje (i18n osobno).
+  const uiLangItem = flat.find((it) => it.label === 'UI LANGUAGE');
+  const uiLangOpt = uiLangItem ? uiLangItem.options[uiLangItem.value] : 'SYSTEM DEFAULT';
+  const uiLang: 'en' | 'pl' = uiLangOpt === 'POLISH' ? 'pl' : uiLangOpt === 'ENGLISH' ? 'en' : systemLang();
 
-  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, recordQuality, language, showTimeLeft, keepScreenOn, optionOf, optionsOf, cycleByLabel };
+  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, recordQuality, language, uiLang, showTimeLeft, keepScreenOn, optionOf, optionsOf, cycleByLabel };
 }

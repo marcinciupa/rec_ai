@@ -18,13 +18,14 @@ const glow = { textShadowColor: textShadow.phosphor.color, textShadowRadius: tex
 
 // wiersze welcome → klucz ustawienia (Settings) + etykieta wyświetlana
 const WELCOME_ROWS: { key: string; label: string }[] = [
-  { key: 'AI LANGUAGE', label: 'LANGUAGE' },
+  { key: 'AI LANGUAGE', label: 'AI LANGUAGE' },
+  { key: 'UI LANGUAGE', label: 'UI LANGUAGE' },
   { key: 'TRANSCRIPTION', label: 'TRANSCRIPTION' },
   { key: 'THEME', label: 'THEME' },
   { key: 'VIEW', label: 'VIEW' },
 ];
 // długie wartości łamane na klawiszu (jak w Settings keyWrap)
-const KEY_WRAP: Record<string, string> = { FULLSCREEN: 'FULL-\nSCREEN' };
+const KEY_WRAP: Record<string, string> = { FULLSCREEN: 'FULL-\nSCREEN', 'SYSTEM DEFAULT': 'SYSTEM\nDEFAULT' };
 
 /** Wiersz wyboru: etykieta z lewej, wartość z prawej. Zaznaczony = tło phosphor + ciemny tekst (jak Settings). */
 function PickRow({ label, value, selected, onPress }: { label: string; value: string; selected: boolean; onPress: () => void }) {
@@ -87,10 +88,9 @@ export function useWelcomeDialog({
   const overlay = (
     // mieści się w ekranie urządzenia (renderowany w slocie Display, obok treści)
     <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, backgroundColor: 'rgba(0,0,0,0.6)' }}>
-      <View style={{ alignSelf: 'stretch', maxWidth: 360, backgroundColor: 'rgba(26,26,26,0.95)', borderWidth: 1, borderColor: screen.olive.primary, borderRadius: 4, padding: 16, gap: 6, boxShadow: '0px 0px 8px 0px rgba(226,255,228,0.25)' } as any}>
+      <View style={{ alignSelf: 'stretch', maxWidth: 360, backgroundColor: color.dark1A, borderWidth: 1, borderColor: screen.olive.primary, borderRadius: 4, padding: 16, gap: 6, boxShadow: '0px 0px 8px 0px rgba(226,255,228,0.25)' } as any}>
         <Text style={{ fontFamily: font.monoHeading.family, fontSize: font.monoHeading.size, color: screen.olive.primary, textAlign: 'center', ...glow }}>WELCOME TO REC_AI</Text>
         <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary, textAlign: 'center' }}>SET YOUR DEFAULTS</Text>
-        <View style={{ height: 1, alignSelf: 'stretch', backgroundColor: screen.olive.inactive, marginVertical: 4 }} />
         {WELCOME_ROWS.map((r, i) => (
           <PickRow key={r.key} label={r.label} value={optionOf(r.key)} selected={i === selected} onPress={() => tapRow(i)} />
         ))}

@@ -268,32 +268,20 @@ function Row({ rec, name, selected, onSelect, options, focus }: { rec: Rec; name
   );
 }
 
-/** Nakładka DETAILS: info o nagraniu na zielonym ekranie (klucz→wartość). */
+/** Nakładka DETAILS: info o nagraniu — styl jak InfoDialog w Settings (ciemna karta, phosphor obrys, scrim). */
 function DetailsPanel({ rows }: { rows: [string, string][] }) {
+  const body = { fontFamily: font.monoBody.family, fontSize: font.monoBody.size } as const;
   return (
-    <View
-      style={
-        {
-          position: 'absolute',
-          top: 48,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          borderRadius: 4,
-          backgroundColor: screen.olive.primary,
-          padding: 24,
-          gap: 12,
-          justifyContent: 'center',
-          boxShadow: `0px 0px 8px 0px rgba(226,255,228,0.25)`,
-        } as any
-      }
-    >
-      {rows.map(([k, v]) => (
-        <View key={k} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
-          <Text style={{ fontFamily: font.monoLabel.family, fontSize: font.monoLabel.size, color: 'rgba(26,26,26,0.6)' }}>{k}</Text>
-          <Text numberOfLines={1} style={{ flex: 1, textAlign: 'right', fontFamily: font.monoBody.family, fontSize: font.monoBody.size, color: color.dark21 }}>{v}</Text>
-        </View>
-      ))}
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+      <View style={{ alignSelf: 'stretch', backgroundColor: color.dark1A, borderWidth: 1, borderColor: screen.olive.primary, borderRadius: 4, padding: 16, gap: 8, boxShadow: '0px 0px 8px 0px rgba(226,255,228,0.25)' } as any}>
+        <Text style={{ ...body, fontSize: font.monoHeading.size, color: screen.olive.primary, textAlign: 'center', ...glow('rgba(226,255,228,0.25)') }}>DETAILS</Text>
+        {rows.map(([k, v]) => (
+          <View key={k} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 16 }}>
+            <Text style={{ ...body, color: screen.olive.secondary }}>{k}</Text>
+            <Text numberOfLines={1} style={{ ...body, color: screen.olive.primary, flexShrink: 1, textAlign: 'right' }}>{v}</Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -960,7 +948,8 @@ export function usePlaybackScreen({
     };
   } else if (phase === 'DETAILS') {
     keyboard = {
-      screen: [{ label: '' }, { label: '' }, { label: '' }],
+      // CLOSE jak w INFO (Settings): klawisz #1 zamyka nakładkę (lub fizyczny BACK)
+      screen: [{ label: 'CLOSE', variant: 'primary', onPress: () => setPhase('LIST') }, { label: '' }, { label: '' }],
       metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), recordKeyList, playKeyOff],
     };
   } else {
