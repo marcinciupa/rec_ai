@@ -385,8 +385,21 @@ export function usePlaybackScreen({
   // realny odtwarzacz pliku (gdy nagranie ma uri); demo (bez uri) = mock niżej. Web → stub no-op.
   const { player, status: pstatus } = usePlayer();
   const realMode = view === 'PLAYER' && !!sel?.uri;
+  // Powrót z czatu → ODŚWIEŻ player (replace + seek do bieżącej pozycji), zamiast tylko przełączyć widok.
+  // Po ASK AI (a zwłaszcza po pytaniu głosem) sesja/stan odtwarzacza bywał zepsuty — PLAY nie wznawiał
+  // i status bywał nieaktualny. Świeży player przywraca grywalny stan i poprawne pstatus (paused od nowa).
+  const backFromChat = () => {
+    setView('PLAYER');
+    if (sel?.uri) {
+      try {
+        const at = pstatus.currentTime || 0;
+        player.replace({ uri: sel.uri });
+        if (at > 0) player.seekTo(at);
+      } catch {}
+    }
+  };
   // pod-widok czatu o notatce (hook zawsze zamontowany; aktywny dopiero w view==='CHAT')
-  const chatView = useChatView({ rec: sel, active: view === 'CHAT', mode, mono, language, nameLabel: sel ? `${displayName(sel, recs)} (${fileSize(sel)})` : '', onTypingChange: onTyping, onBack: () => setView('PLAYER') });
+  const chatView = useChatView({ rec: sel, active: view === 'CHAT', mode, mono, language, nameLabel: sel ? `${displayName(sel, recs)} (${fileSize(sel)})` : '', onTypingChange: onTyping, onBack: backFromChat });
 
   // ── PLAYER: ładowanie (tylko demo/mock; realny plik ma własny status) ──
   useEffect(() => {
@@ -640,7 +653,7 @@ export function usePlaybackScreen({
       return true;
     }
     if (view === 'CHAT') {
-      setView('PLAYER');
+      backFromChat(); // systemowy BACK z czatu → odśwież player (jak klawisz BACK)
       return true;
     }
     if (view === 'PLAYER') {
