@@ -38,8 +38,8 @@ const PRESETS_BY_LANG: Record<string, { label: string; q: string }[]> = {
 // jak w projekcie) renderowane czerwienią; reszta phosphor. Tekst rozbity wokół „•REC" na pre/post, per język.
 const REC_TOKEN = '•REC';
 const WELCOME_BY_LANG: Record<string, { pre: string; post: string }> = {
-  en: { pre: 'Hi! Ask me about this note — pick an option above, tap KEYBOARD to type, or press ', post: ' to ask with your voice.' },
-  pl: { pre: 'Cześć! Zapytaj o tę notatkę — wybierz opcję powyżej, użyj KEYBOARD, by pisać, albo wciśnij ', post: ', by zapytać głosem.' },
+  en: { pre: 'Hi! Ask me about this note — pick an option, tap KEYBOARD to type, or press ', post: ' to ask with your voice.' },
+  pl: { pre: 'Cześć! Zapytaj o tę notatkę — wybierz opcję, użyj KEYBOARD, by pisać, albo wciśnij ', post: ', by zapytać głosem.' },
 };
 
 const glow = (c: string) => ({ textShadowColor: c, textShadowRadius: 4, textShadowOffset: { width: 0, height: 0 } });
@@ -247,7 +247,8 @@ export function useChatView({
   useEffect(() => { const t = setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 30); return () => clearTimeout(t); }, [idx]);
   const idxRef = useRef(0); idxRef.current = idx;
   const pairsLenRef = useRef(0); pairsLenRef.current = pairsLen;
-  const goPair = (d: -1 | 1) => { const len = pairsLenRef.current; if (!len) return; setPairIdx(Math.min(len - 1, Math.max(0, idxRef.current + d))); };
+  // zapętlone: z najnowszej pary „następna" wraca na pierwszą (i odwrotnie)
+  const goPair = (d: -1 | 1) => { const len = pairsLenRef.current; if (!len) return; setPairIdx((idxRef.current + d + len) % len); };
   const goPairRef = useRef(goPair); goPairRef.current = goPair;
   // swipe całej konwersacji: poziomy gest → poprzednia/następna para (pionowy zostaje dla scrolla długich treści)
   const swipe = useRef(

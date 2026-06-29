@@ -202,7 +202,8 @@ function Knob({
 
   const gripColor = highlighted ? t.buttonActive : t.printed;
   return (
-    <Animated.View style={{ transform: [{ translateX: tx }] }} {...pan.panHandlers}>
+    // hitSlop powiększa pole dotyku knoba (łatwiej trafić palcem) bez zmiany jego rozmiaru wizualnego
+    <Animated.View style={{ transform: [{ translateX: tx }] }} hitSlop={{ top: 18, bottom: 18, left: 16, right: 16 }} {...pan.panHandlers}>
       <Bevel
         stroke={t.raisedBevel}
         width={1}

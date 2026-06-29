@@ -54,6 +54,15 @@ export function useAudioCapture() {
     } catch {}
   };
 
+  // po nagraniu wróć do trybu ODTWARZANIA — inaczej sesja zostaje w „record" (iOS PlayAndRecord)
+  // i odtwarzacz nie gra po powrocie z czatu (klawisz PLAY „nie działa"). Wołane na stop i discard.
+  const restorePlayback = async () => {
+    if (!REAL) return;
+    try {
+      await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
+    } catch {}
+  };
+
   const start = async (): Promise<boolean> => {
     if (!REAL) return false;
     try {
@@ -119,6 +128,7 @@ export function useAudioCapture() {
     await endSegment();
     const uri = await concatSegments(segments.current);
     segments.current = [];
+    await restorePlayback(); // wróć do trybu odtwarzania (PLAY działa po powrocie z czatu)
     if (!uri) return null;
     let sizeBytes: number | undefined;
     try {
@@ -138,6 +148,7 @@ export function useAudioCapture() {
       } catch {}
     }
     segments.current = [];
+    await restorePlayback(); // wróć do trybu odtwarzania (PLAY działa po powrocie z czatu)
   };
 
   return { start, stop, discard, suspend, resumeCapture, level, real: REAL };

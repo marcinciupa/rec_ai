@@ -939,7 +939,8 @@ export function usePlaybackScreen({
     };
   } else if (phase === 'DELETED') {
     keyboard = {
-      screen: [{ label: '' }, { label: 'UNDO', supporting: '[HOLD]', variant: 'primary', onHoldStart: armDeletedDismiss, onHoldComplete: undo, holdMs: 2000 }, { label: '' }],
+      // UNDO hold = 2× krótszy niż DELETE (1000 vs 2000 ms) — szybsze cofnięcie
+      screen: [{ label: '' }, { label: 'UNDO', supporting: '[HOLD]', variant: 'primary', onHoldStart: armDeletedDismiss, onHoldComplete: undo, holdMs: 1000 }, { label: '' }],
       metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), recordKeyList, playKeyOff],
     };
   } else if (phase === 'DETAILS') {
