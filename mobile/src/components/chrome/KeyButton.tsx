@@ -13,6 +13,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { useTiltCtx } from '../../theme/TiltContext';
 import { hapticPress, hapticRelease, hapticShort, hapticHold, hapticCancel } from '../../lib/haptics';
 import { Bevel } from './primitives';
+import { ScreenMatrix } from './ScreenMatrix';
 
 /**
  * Stan "clicked" (Figma 121:269): nakładka `dim` na cały przycisk (rgba(26,26,26,0.25))
@@ -216,6 +217,8 @@ function KeyButton({
               innerStyle={{ padding: dims.key.padding }}
             >
               {tile}
+              {/* matryca ekranu: między treścią a połyskiem/glow (Figma „matrix") */}
+              <ScreenMatrix radius={dims.key.radius} />
               {/* połysk klawisza ZAWSZE NAD treścią (pointerEvents none) */}
               <ScreenSheen />
             </Bevel>

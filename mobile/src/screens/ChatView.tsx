@@ -8,9 +8,10 @@
  * Wymaga notatki z transkryptem (wejście tylko dla transcribed+uri) — patrz PlaybackScreen.
  */
 import { ReactNode, useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, TextInput, Keyboard } from 'react-native';
+import { View, Text, ScrollView, TextInput, Keyboard, PanResponder } from 'react-native';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
+import type { SliderConfig } from '../components/chrome/SeekSlider';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 import type { Rec } from '../hooks/useRecordings';
 import { useChat, ChatTurn } from '../hooks/useChat';
@@ -46,11 +47,11 @@ const PHOSPHOR_GLOW = glow('rgba(226,255,228,0.25)');
 
 type Voice = 'idle' | 'listening' | 'transcribing';
 
-/** Dymek wiadomości: asystent = fosfor po lewej; użytkownik = pastylka fosforowa po prawej (ciemny tekst). */
+/** Dymek wiadomości: użytkownik = pastylka fosforowa po LEWEJ (ciemny tekst); odpowiedź AI = fosfor po PRAWEJ. */
 function Bubble({ turn, rich }: { turn: ChatTurn; rich?: ReactNode }) {
   const isUser = turn.role === 'user';
   return (
-    <View style={{ flexDirection: 'row', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
+    <View style={{ flexDirection: 'row', justifyContent: isUser ? 'flex-start' : 'flex-end' }}>
       <View
         style={
           {
@@ -119,6 +120,7 @@ export function useChatView({
   const welcome = WELCOME_BY_LANG[language] ?? WELCOME_BY_LANG.en;
   const capture = useAudioCapture();
   const [voice, setVoice] = useState<Voice>('idle');
+  const [pairIdx, setPairIdx] = useState(0); // przeglądana para pytanie→odpowiedź (prev/next + swipe)
   const scrollRef = useRef<ScrollView>(null);
   // tryb pisania: pole tekstowe + systemowa klawiatura; App chowa dolną obudowę i wchodzi w fullscreen
   const [typing, setTyping] = useState(false);
@@ -228,43 +230,73 @@ export function useChatView({
     };
   }
 
-  // kontener pokazuje tylko ostatnią parę: ostatnie pytanie usera (góra) + odpowiedź na nie (pod spodem).
+  // pary pytanie→odpowiedź; przeglądane prev/next (slider) albo swipem konwersacji. Domyślnie najnowsza.
   const msgs = chat.messages;
-  let lastUserIdx = -1;
-  let lastAsstIdx = -1;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (lastUserIdx < 0 && msgs[i].role === 'user') lastUserIdx = i;
-    if (lastAsstIdx < 0 && msgs[i].role === 'assistant') lastAsstIdx = i;
-    if (lastUserIdx >= 0 && lastAsstIdx >= 0) break;
+  const pairs: { user: ChatTurn; answer: ChatTurn | null }[] = [];
+  for (let i = 0; i < msgs.length; i++) {
+    if (msgs[i].role === 'user') {
+      pairs.push({ user: msgs[i], answer: msgs[i + 1]?.role === 'assistant' ? msgs[i + 1] : null });
+    }
   }
-  const lastUser = lastUserIdx >= 0 ? msgs[lastUserIdx] : null;
-  const lastAnswer = lastAsstIdx > lastUserIdx ? msgs[lastAsstIdx] : null; // odpowiedź dotyczy ostatniego pytania
+  const pairsLen = pairs.length;
+  const idx = pairsLen ? Math.min(pairIdx, pairsLen - 1) : 0;
+  const cur = pairsLen ? pairs[idx] : null;
+  // nowa para (zadane pytanie / wczytana historia z DB) → skok na najnowszą
+  useEffect(() => { setPairIdx(Math.max(0, pairsLen - 1)); }, [pairsLen]);
+  // zmiana pary → przewiń do góry, by pytanie było widoczne
+  useEffect(() => { const t = setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 30); return () => clearTimeout(t); }, [idx]);
+  const idxRef = useRef(0); idxRef.current = idx;
+  const pairsLenRef = useRef(0); pairsLenRef.current = pairsLen;
+  const goPair = (d: -1 | 1) => { const len = pairsLenRef.current; if (!len) return; setPairIdx(Math.min(len - 1, Math.max(0, idxRef.current + d))); };
+  const goPairRef = useRef(goPair); goPairRef.current = goPair;
+  // swipe całej konwersacji: poziomy gest → poprzednia/następna para (pionowy zostaje dla scrolla długich treści)
+  const swipe = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 24 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+      onPanResponderRelease: (_e, g) => {
+        if (g.dx <= -40) goPairRef.current(1); // w lewo → nowsza para
+        else if (g.dx >= 40) goPairRef.current(-1); // w prawo → starsza para
+      },
+    })
+  ).current;
+  // slider prev/next przegląda pary (gdy jest >1); knob (discrete) tak samo
+  const slider: SliderConfig | undefined =
+    pairsLen > 1 ? { highlighted: true, discrete: true, onPrev: () => goPair(-1), onNext: () => goPair(1), onAdjust: (dir) => goPair(dir) } : undefined;
 
   const content = (
     <>
       <ScreenTopBar mode={mode} onCycleMode={undefined} ai={ai} labelActive={busy || voice === 'listening'} />
       <View style={{ flex: 1, alignSelf: 'stretch', paddingHorizontal: 16, paddingTop: 8 }}>
-        <ScrollView
-          ref={scrollRef}
-          style={{ flex: 1, alignSelf: 'stretch' }}
-          contentContainerStyle={{ gap: 8, paddingBottom: 8 }}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* brak historii → wiadomość powitalna (Figma 289:6298); „•REC" czerwienią (jak w projekcie) */}
-          {msgs.length === 0 ? (
-            <Bubble
-              turn={{ role: 'assistant', content: `${welcome.pre}${REC_TOKEN}${welcome.post}` }}
-              rich={<>{welcome.pre}<Text style={{ color: color.recordRed }}>{REC_TOKEN}</Text>{welcome.post}</>}
-            />
-          ) : null}
-          {/* ostatnie pytanie usera (góra) + odpowiedź na nie (pod spodem) */}
-          {lastUser ? <Bubble turn={lastUser} /> : null}
-          {lastAnswer ? <Bubble turn={lastAnswer} /> : null}
-          {voice === 'listening' ? <StatusLine text="LISTENING… TAP STOP" tone="red" /> : null}
-          {voice === 'transcribing' ? <StatusLine text="READING QUESTION…" tone="phosphor" /> : null}
-          {chat.phase === 'thinking' ? <StatusLine text="THINKING…" tone="phosphor" /> : null}
-          {chat.phase === 'error' ? <StatusLine text={`ERROR: ${chat.error ?? 'try again'}`} tone="red" /> : null}
-        </ScrollView>
+        {/* konwersacja: swipe poziomy przełącza pary (jak prev/next), pionowy scroll dla długich treści */}
+        <View style={{ flex: 1, alignSelf: 'stretch' }} {...swipe.panHandlers}>
+          <ScrollView
+            ref={scrollRef}
+            style={{ flex: 1, alignSelf: 'stretch' }}
+            contentContainerStyle={{ gap: 8, paddingBottom: 8 }}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* brak historii → wiadomość powitalna (Figma 289:6298); „•REC" czerwienią (jak w projekcie) */}
+            {pairsLen === 0 ? (
+              <Bubble
+                turn={{ role: 'assistant', content: `${welcome.pre}${REC_TOKEN}${welcome.post}` }}
+                rich={<>{welcome.pre}<Text style={{ color: color.recordRed }}>{REC_TOKEN}</Text>{welcome.post}</>}
+              />
+            ) : null}
+            {/* bieżąca para: pytanie usera (góra) + odpowiedź na nie (pod spodem) */}
+            {cur ? <Bubble turn={cur.user} /> : null}
+            {cur?.answer ? <Bubble turn={cur.answer} /> : null}
+            {voice === 'listening' ? <StatusLine text="LISTENING… TAP STOP" tone="red" /> : null}
+            {voice === 'transcribing' ? <StatusLine text="READING QUESTION…" tone="phosphor" /> : null}
+            {chat.phase === 'thinking' ? <StatusLine text="THINKING…" tone="phosphor" /> : null}
+            {chat.phase === 'error' ? <StatusLine text={`ERROR: ${chat.error ?? 'try again'}`} tone="red" /> : null}
+          </ScrollView>
+        </View>
+        {/* wskaźnik pary (gdy jest >1) — strzałki sugerują prev/next i swipe */}
+        {pairsLen > 1 ? (
+          <Text style={{ textAlign: 'center', fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary, paddingTop: 4 }}>
+            {`‹  ${idx + 1} / ${pairsLen}  ›`}
+          </Text>
+        ) : null}
         {/* pole tekstowe (Figma 289:5603): jasna pigułka phosphor + ciemny mono; systemowa klawiatura.
             Widoczne tylko w trybie pisania; ENTER/SEND wysyła i czyści, blur kończy pisanie. */}
         {typing ? (
@@ -295,5 +327,5 @@ export function useChatView({
     </>
   );
 
-  return { content, keyboard };
+  return { content, keyboard, slider };
 }

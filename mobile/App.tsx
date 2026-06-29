@@ -157,6 +157,17 @@ export default function App() {
       ? handed
       : { ...handed, metal: handed.metal.map((k) => (k.type === 'record' && !k.onPress ? { ...k, onPress: () => setMode('RECORDING') } : k)) };
   const slider = mode === 'SETTINGS' ? settings.slider : mode === 'PLAYBACK' ? playback.slider : undefined;
+  // onboarding: klawiatura ograniczona do CONFIRM (środkowy klawisz, wariant fosforowy = primary); reszta wyłączona,
+  // by nie wchodzić w interakcję z ekranem pod spodem. CONFIRM zamyka onboarding (finishWelcome).
+  const welcomeKeyboard: KeyboardConfig = {
+    screen: [{ label: '' }, { label: 'CONFIRM', variant: 'primary', onPress: finishWelcome }, { label: '' }],
+    metal: [
+      { type: 'label', upper: 'STOP', lower: 'BACK', active: false },
+      { type: 'record' },
+      { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
+    ],
+  };
+  const finalKeyboard = showWelcome ? welcomeKeyboard : keyboard;
 
   // schowaj splash dopiero gdy fonty gotowe (płynne przejście, bez białego błysku)
   useEffect(() => {
@@ -198,16 +209,16 @@ export default function App() {
           muted={mode === 'RECORDING' && recording.isMuted}
           theme={settings.theme}
           motion={settings.motion}
-          keyboard={keyboard}
-          slider={slider}
+          keyboard={finalKeyboard}
+          slider={showWelcome ? undefined : slider}
           hideControls={chatTyping}
           onPinch={(dir) => settings.setFullscreen(dir === 'out')}
         >
           {content}
+          {/* onboarding mieści się W EKRANIE urządzenia (slot Display), jak inne dialogi */}
+          {showWelcome ? <WelcomeDialog optionOf={settings.optionOf} cycleByLabel={settings.cycleByLabel} /> : null}
         </DeviceShell>
       </View>
-
-      {showWelcome ? <WelcomeDialog optionOf={settings.optionOf} cycleByLabel={settings.cycleByLabel} onFinish={finishWelcome} /> : null}
 
       <StatusBar style={barStyle} />
     </View>

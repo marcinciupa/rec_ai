@@ -9,6 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { color, dims, gradient, shadow } from '../../theme/tokens';
 import { useTiltCtx } from '../../theme/TiltContext';
+import { ScreenMatrix } from './ScreenMatrix';
 
 /** Miękka poświata zza lewego-górnego rogu szyby; delikatnie pływa (parallax, górna część). */
 function Glow() {
@@ -108,6 +109,8 @@ export function Display({ children }: { children?: ReactNode }) {
         >
           {children}
         </View>
+        {/* matryca ekranu: między treścią a połyskiem/poświatą (Figma „matrix") */}
+        <ScreenMatrix radius={dims.screenRadius} />
         {/* połysk + poświata ZAWSZE NAD treścią (pointerEvents none → nie blokują dotyku) */}
         <Sheen />
         <Glow />

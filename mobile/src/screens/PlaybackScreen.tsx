@@ -84,9 +84,11 @@ function PlayWaveform({ ratio, dim, samples }: { ratio: number; dim?: boolean; s
 }
 
 // Pojedynczy segment transkryptu w playerze (Figma 288:3568): kolumna timestampów [start/koniec]
-// + tekst Mono/Body. Stan wg pozycji: odtworzony = jasny; bieżący = wypowiedziana część jasna,
-// reszta przyciemniona; nadchodzący = cały przyciemniony.
-function TranscriptRow({ startN, endN, endLabel, text, posSec }: { startN: number; endN: number; endLabel: string; text: string; posSec: number }) {
+// + tekst Mono/Body. Tekst (karaoke) wg pozycji: odtworzony = jasny; bieżący = wypowiedziana część
+// jasna, reszta przyciemniona; nadchodzący = cały przyciemniony. Timestampy NIEZALEŻNIE od karaoke:
+// cała para rozjaśnia się z chwilą rozpoczęcia sekcji (posSec ≥ startN); bieżąca sekcja = glow (kursor).
+// Tap w kolumnę timestampów → seek do startu sekcji + odtwarzanie (onSeek).
+function TranscriptRow({ startN, endN, endLabel, text, posSec, onSeek }: { startN: number; endN: number; endLabel: string; text: string; posSec: number; onSeek?: (sec: number) => void }) {
   const bright = screen.olive.primary;
   const dim = screen.olive.secondary;
   const played = posSec >= endN; // segment w całości za nami
@@ -111,12 +113,14 @@ function TranscriptRow({ startN, endN, endLabel, text, posSec }: { startN: numbe
   } else {
     bodyNode = <Text style={{ color: dim }}>{text}</Text>;
   }
+  // timestampy niezależnie od tekstu: cała para jasna gdy sekcja się zaczęła; bieżąca = glow
+  const started = posSec >= startN;
   return (
     <View style={{ flexDirection: 'row', alignSelf: 'stretch', gap: 8 }}>
-      <View style={{ justifyContent: 'center' }}>
-        <Text style={{ ...cap, color: posSec >= startN ? bright : dim }}>{fmtShort(startN)}</Text>
-        <Text style={{ ...cap, color: played ? bright : dim, marginTop: -2 }}>{endLabel}</Text>
-      </View>
+      <Pressable onPress={() => onSeek?.(startN)} hitSlop={6} style={{ justifyContent: 'center' }}>
+        <Text style={{ ...cap, color: started ? bright : dim, ...(current ? glow('rgba(226,255,228,0.25)') : null) }}>{fmtShort(startN)}</Text>
+        <Text style={{ ...cap, color: started ? bright : dim, marginTop: -2 }}>{endLabel}</Text>
+      </Pressable>
       <Text style={{ ...body, flex: 1 }}>{bodyNode}</Text>
     </View>
   );
@@ -125,7 +129,7 @@ function TranscriptRow({ startN, endN, endLabel, text, posSec }: { startN: numbe
 // Transkrypt w playerze (Figma 288:3568): lista segmentów z timestampami (karaoke). Bieżący segment
 // jasny z podziałem wypowiedziano/reszta, kolejne przyciemnione; auto-scroll trzyma bieżący w widoku.
 // Bez czasów segmentów → fallback: jeden blok z podziałem proporcjonalnym (jak dotąd).
-function TranscriptView({ transcript, ratio, posSec }: { transcript: Transcript; ratio: number; posSec: number }) {
+function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Transcript; ratio: number; posSec: number; onSeek?: (sec: number) => void }) {
   const segs = transcript.segments;
   const scrollRef = useRef<ScrollView>(null);
   const sizes = useRef({ content: 0, view: 0 });
@@ -166,7 +170,7 @@ function TranscriptView({ transcript, ratio, posSec }: { transcript: Transcript;
       showsVerticalScrollIndicator={false}
     >
       {hasSegs ? (
-        rows.map((r, i) => <TranscriptRow key={i} startN={r.startN} endN={r.endN} endLabel={r.endLabel} text={r.text} posSec={posSec} />)
+        rows.map((r, i) => <TranscriptRow key={i} startN={r.startN} endN={r.endN} endLabel={r.endLabel} text={r.text} posSec={posSec} onSeek={onSeek} />)
       ) : (
         <Text style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, lineHeight: Math.round(font.monoBody.size * 1.5) }}>
           <Text style={{ color: screen.olive.primary }}>{text.slice(0, at)}</Text>
@@ -646,7 +650,7 @@ export function usePlaybackScreen({
 
   // ════════════ WIDOK: CHAT ════════════
   if (view === 'CHAT') {
-    return { content: chatView.content, keyboard: chatView.keyboard, goBack };
+    return { content: chatView.content, keyboard: chatView.keyboard, slider: chatView.slider, goBack };
   }
 
   // ════════════ WIDOK: PLAYER ════════════
@@ -660,6 +664,9 @@ export function usePlaybackScreen({
     // w trakcie przewijania pokazuj lokalną pozycję scrubu (płynnie), inaczej realną z odtwarzacza
     const uiPos = scrubDisplay != null ? scrubDisplay : realMode ? pstatus.currentTime : pos;
     const uiLen = realMode ? pstatus.duration || sel?.lengthSec || 0 : len;
+    // segmenty transkryptu → prev/next nawiguje po timestampach (zamiast skoku między nagraniami)
+    const segList = transcript?.segments ?? [];
+    const hasSegNav = !!sel?.transcribed && segList.length > 0;
     const deleteKey = { label: 'DELETE', supporting: '[HOLD]', variant: 'risk' as const, onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 };
     const recordKey = { type: 'record' as const, onPress: onStartRecording };
 
@@ -781,9 +788,38 @@ export function usePlaybackScreen({
         }
       }
     };
+    // skok do sekundy: realny odtwarzacz seekTo, demo = setPos; opcjonalnie od razu graj (tap timestampa)
+    const seekToSec = (sec: number, play = true) => {
+      const t = uiLen > 0 ? Math.max(0, Math.min(uiLen, sec)) : Math.max(0, sec);
+      setScrubDisplay(null);
+      if (realMode) {
+        try { player.seekTo(t); if (play) player.play(); } catch {}
+      } else {
+        setPos(t);
+        if (play) setPlayerState('PLAYING');
+      }
+    };
+    // prev/next między timestampami: bieżący segment = ostatni start ≤ pozycja.
+    // next → początek następnego; prev → restart bieżącego (gdy >2 s w środku) lub poprzedni.
+    const gotoSegment = (dir: -1 | 1) => {
+      const starts = segList.map((s) => s.start ?? 0);
+      if (!starts.length) return;
+      let ci = 0;
+      for (let i = 0; i < starts.length; i++) if (uiPos >= starts[i] - 0.05) ci = i;
+      const target = dir === 1
+        ? starts[Math.min(starts.length - 1, ci + 1)]
+        : uiPos - starts[ci] > 2 ? starts[ci] : starts[Math.max(0, ci - 1)];
+      seekToSec(target, true);
+    };
     const slider: SliderConfig | undefined = loading
       ? undefined
-      : { highlighted: true, onPrev: () => playerSkip(-1), onNext: () => playerSkip(1), onScrub, onScrubEnd };
+      : {
+          highlighted: true,
+          onPrev: hasSegNav ? () => gotoSegment(-1) : () => playerSkip(-1),
+          onNext: hasSegNav ? () => gotoSegment(1) : () => playerSkip(1),
+          onScrub,
+          onScrubEnd,
+        };
 
     // dolny wiersz info: nazwa pliku + zaokrąglony rozmiar (lewo)
     const nameSize = sel ? `${displayName(sel, recs)} (${fileSize(sel)})` : '';
@@ -795,7 +831,7 @@ export function usePlaybackScreen({
         <ScreenTopBar mode={mode} onCycleMode={undefined} ai={ai} labelActive={playing} />
         <View style={{ flex: 1, alignSelf: 'stretch', justifyContent: showTranscript ? 'flex-start' : 'center', gap: 24, paddingHorizontal: 16, paddingTop: showTranscript ? 8 : 0 }}>
           {showTranscript ? (
-            <TranscriptView transcript={transcript!} ratio={uiLen > 0 ? uiPos / uiLen : 0} posSec={uiPos} />
+            <TranscriptView transcript={transcript!} ratio={uiLen > 0 ? uiPos / uiLen : 0} posSec={uiPos} onSeek={(s) => seekToSec(s, true)} />
           ) : (
             <PlayWaveform ratio={uiLen > 0 ? uiPos / uiLen : 0} dim={loading} samples={sel?.samples} />
           )}
