@@ -87,7 +87,7 @@ export function useWelcomeDialog({
 
   const overlay = (
     // mieści się w ekranie urządzenia (renderowany w slocie Display, obok treści)
-    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, backgroundColor: 'rgba(0,0,0,0.6)' }}>
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, backgroundColor: 'rgba(0,0,0,0.5)' }}>
       <View style={{ alignSelf: 'stretch', maxWidth: 360, backgroundColor: color.dark1A, borderWidth: 1, borderColor: screen.olive.primary, borderRadius: 4, padding: 16, gap: 6, boxShadow: '0px 0px 8px 0px rgba(226,255,228,0.25)' } as any}>
         <Text style={{ fontFamily: font.monoHeading.family, fontSize: font.monoHeading.size, color: screen.olive.primary, textAlign: 'center', ...glow }}>WELCOME TO REC_AI</Text>
         <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary, textAlign: 'center' }}>SET YOUR DEFAULTS</Text>

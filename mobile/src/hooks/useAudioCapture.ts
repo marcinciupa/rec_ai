@@ -41,9 +41,10 @@ export function useAudioCapture() {
   const state = useAudioRecorderState(recorder);
   const level = normLevel(state?.metering);
   const segments = useRef<string[]>([]); // uri kolejnych segmentów (między pauzami)
-  // opcje formatu wybrane na start nagrania (RECORD MODE / COMPRESSION) — te same dla wszystkich segmentów,
-  // żeby sklejanie AAC zadziałało. Nadpisują bazowe REC_OPTIONS przez prepareToRecordAsync(Partial).
-  const fmtRef = useRef<{ numberOfChannels: number; bitRate: number }>({ numberOfChannels: 1, bitRate: 96000 });
+  // PEŁNE opcje nagrania (RECORD MODE/COMPRESSION) — te same dla wszystkich segmentów, żeby sklejanie AAC
+  // zadziałało. WAŻNE: musi być PEŁNY obiekt (REC_OPTIONS + nadpisania), bo prepareToRecordAsync(Partial)
+  // gubił format AAC ADTS (extension/outputFormat) → plik w złym formacie i transkrypcja nie działała.
+  const fmtRef = useRef<any>(REC_OPTIONS);
 
   const beginSegment = async () => {
     await recorder.prepareToRecordAsync(fmtRef.current);
@@ -72,8 +73,9 @@ export function useAudioCapture() {
       const { granted } = await requestRecordingPermissionsAsync();
       if (!granted) return false;
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
-      // RECORD MODE → kanały (stereo=2/mono=1); COMPRESSION → bitrate (HIGH=192k [BIG] / LOW=64k [SMALL])
-      fmtRef.current = { numberOfChannels: opts?.stereo ? 2 : 1, bitRate: opts?.quality === 'LOW' ? 64000 : 192000 };
+      // RECORD MODE → kanały (stereo=2/mono=1); COMPRESSION → bitrate (HIGH=192k [BIG] / LOW=64k [SMALL]).
+      // PEŁNE opcje (spread REC_OPTIONS) — zachowaj AAC ADTS/extension, nadpisz tylko kanały/bitrate.
+      fmtRef.current = { ...REC_OPTIONS, numberOfChannels: opts?.stereo ? 2 : 1, bitRate: opts?.quality === 'LOW' ? 64000 : 192000 };
       segments.current = [];
       await beginSegment();
       return true;

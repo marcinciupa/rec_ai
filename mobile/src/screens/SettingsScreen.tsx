@@ -273,25 +273,31 @@ export function useSettingsScreen({
   const offsetRef = useRef(0); // bieżące przewinięcie
   const viewportRef = useRef(0); // wysokość okna scrolla
 
-  useEffect(() => {
+  // utrzymuje zaznaczony wiersz w widoku (+lookahead ~jednego wiersza, by widać było sąsiednią opcję).
+  // Wołane na zmianę zaznaczenia ORAZ na zmianę wysokości listy (onLayout) — np. po przełączeniu VIEW
+  // (Fullscreen↔Device) ramka się skaluje i bez tego zaznaczony wiersz „uciekał spod palca".
+  const scrollToSelected = () => {
     const node = rowRefs.current.get(selected);
     if (!node || !contentRef.current || !scrollRef.current) return;
     const pad = 8;
-    const look = 44; // „lookahead": rezerwa ~jednego wiersza, by sąsiednia opcja (np. INFO pod HANDED) była widoczna
+    const lookTop = 64; // większy margines GÓRNY → odsłania nagłówek sekcji nad zaznaczonym (rozwiązanie C)
+    const lookDown = 44; // dolny → widać sąsiednią opcję pod spodem
     node.measureLayout(
       contentRef.current as any,
       (_x, y, _w, h) => {
         const top = offsetRef.current;
         const vh = viewportRef.current;
-        if (y - pad - look < top) {
-          scrollRef.current?.scrollTo({ y: Math.max(0, y - pad - look), animated: true });
-        } else if (vh > 0 && y + h + pad + look > top + vh) {
-          scrollRef.current?.scrollTo({ y: y + h + pad + look - vh, animated: true });
+        if (y - pad - lookTop < top) {
+          scrollRef.current?.scrollTo({ y: Math.max(0, y - pad - lookTop), animated: true });
+        } else if (vh > 0 && y + h + pad + lookDown > top + vh) {
+          scrollRef.current?.scrollTo({ y: y + h + pad + lookDown - vh, animated: true });
         }
       },
       () => {}
     );
-  }, [selected]);
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { scrollToSelected(); }, [selected]);
 
   // Zaznaczenie w dół / w górę (z zawijaniem). NEXT[CYCLE] i przycisk fwd → dół; prev → góra.
   const move = (dir: -1 | 1) => setSelected((i) => (i + dir + TOTAL_ITEMS) % TOTAL_ITEMS);
@@ -412,6 +418,7 @@ export function useSettingsScreen({
         }}
         onLayout={(e: LayoutChangeEvent) => {
           viewportRef.current = e.nativeEvent.layout.height;
+          scrollToSelected(); // zmiana wysokości listy (np. VIEW Fullscreen↔Device) → wróć zaznaczonym do widoku
         }}
       >
         <View ref={contentRef} style={{ gap: 24 }}>

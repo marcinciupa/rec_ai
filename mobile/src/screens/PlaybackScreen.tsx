@@ -981,7 +981,9 @@ export function usePlaybackScreen({
     <>
       <ScreenTopBar mode={mode} onCycleMode={overlay ? undefined : onCycleMode} ai={ai} labelActive={false} />
       <View style={{ flex: 1, alignSelf: 'stretch', paddingHorizontal: 16, paddingTop: 8 }}>
-        <View style={{ gap: 8, opacity: overlay ? 0.35 : 1 }}>
+        {/* DETAILS ma własny scrim (jak INFO) → NIE przyciemniaj listy, inaczej podwójne ciemne tło.
+            CONFIRM/DELETED mają pełny panel → dim listy zostaje. */}
+        <View style={{ gap: 8, opacity: phase === 'CONFIRM' || phase === 'DELETED' ? 0.35 : 1 }}>
           {recs.map((r) => (
             <Row
               key={r.id}
