@@ -134,15 +134,19 @@ function TranscriptRow({ startN, endN, endLabel, text, posSec, onSeek }: { start
   }
   // timestampy niezależnie od tekstu: cała para jasna gdy sekcja się zaczęła; bieżąca = glow
   const started = posSec >= startN;
-  // CAŁY segment klikalny → seek do jego startu + odtwarzanie (onSeek)
+  // alignItems: flex-start → timestampy DO GÓRY, wysokość wiersza = wyższy z elementów (timestamp/tekst).
+  // Klik: osobne Pressable na timestampie i na tekście (oba seek do startu segmentu + play) — niezawodny tap.
+  const seek = () => onSeek?.(startN);
   return (
-    <Pressable onPress={() => onSeek?.(startN)} style={{ flexDirection: 'row', alignSelf: 'stretch', gap: 8 }}>
-      <View style={{ justifyContent: 'center' }}>
+    <View style={{ flexDirection: 'row', alignSelf: 'stretch', alignItems: 'flex-start', gap: 8 }}>
+      <Pressable onPress={seek} hitSlop={8}>
         <Text style={{ ...cap, color: started ? bright : dim, ...(current ? glow('rgba(226,255,228,0.25)') : null) }}>{fmtShort(startN)}</Text>
         <Text style={{ ...cap, color: started ? bright : dim, marginTop: -2 }}>{endLabel}</Text>
-      </View>
-      <Text style={{ ...body, flex: 1 }}>{bodyNode}</Text>
-    </Pressable>
+      </Pressable>
+      <Pressable onPress={seek} style={{ flex: 1 }}>
+        <Text style={{ ...body }}>{bodyNode}</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -339,6 +343,7 @@ function OverlayPanel({ tone, title, sub }: { tone: 'red' | 'phosphor'; title: s
 export function usePlaybackScreen({
   store,
   mono = false,
+  quality = 'HIGH',
   language = 'en',
   showTimeLeft = false,
   onTyping,
@@ -349,9 +354,11 @@ export function usePlaybackScreen({
   transcription,
   pendingPlayId,
   onConsumePending,
+  recordingsRequest = 0,
 }: {
   store: RecordingsStore;
   mono?: boolean;
+  quality?: 'HIGH' | 'LOW'; // COMPRESSION → label dolnego paska HQ/MQ
   language?: string;
   showTimeLeft?: boolean; // timer playera: pokaż czas pozostały (countdown) zamiast minionego
   onTyping?: (on: boolean) => void; // czat wszedł/wyszedł z trybu pisania (klawiatura systemowa)
@@ -363,6 +370,7 @@ export function usePlaybackScreen({
   // żądanie z ekranu nagrywania: otwórz PLAYER dla tego nagrania i od razu graj (autostart)
   pendingPlayId?: string | null;
   onConsumePending?: () => void;
+  recordingsRequest?: number; // licznik z klawisza RECORDINGS → reset widoku na LIST
 }) {
   const { recordings: recs, removeById, insertAt } = store;
   const [rawSel, setSelId] = useState<string>('');
@@ -437,7 +445,7 @@ export function usePlaybackScreen({
     }
   };
   // pod-widok czatu o notatce (hook zawsze zamontowany; aktywny dopiero w view==='CHAT')
-  const chatView = useChatView({ rec: sel, active: view === 'CHAT', mode, mono, language, nameLabel: sel ? `${displayName(sel, recs)} (${fileSize(sel)})` : '', onTypingChange: onTyping, onBack: backFromChat });
+  const chatView = useChatView({ rec: sel, active: view === 'CHAT', mode, mono, quality, language, nameLabel: sel ? `${displayName(sel, recs)} (${fileSize(sel)})` : '', onTypingChange: onTyping, onBack: backFromChat });
 
   // ── PLAYER: ładowanie (tylko demo/mock; realny plik ma własny status) ──
   useEffect(() => {
@@ -482,10 +490,12 @@ export function usePlaybackScreen({
     []
   );
 
-  // ── PLAYER: wczytaj transkrypt zaznaczonego nagrania (gdy transcribed) → wariant z tekstem ──
+  // ── PLAYER/CHAT: wczytaj transkrypt zaznaczonego nagrania (gdy transcribed) → wariant z tekstem ──
+  // CHAT należy do tej samej notatki — NIE czyścimy transkryptu na PLAYER↔CHAT, inaczej po powrocie z ASK AI
+  // przez ułamek sekundy widać player BEZ transkrypcji (reload async). Czyścimy tylko poza player/chat (LIST).
   useEffect(() => {
     let alive = true;
-    if (view === 'PLAYER' && sel?.transcribed && sel?.id) {
+    if ((view === 'PLAYER' || view === 'CHAT') && sel?.transcribed && sel?.id) {
       getTranscript(sel.id)
         .then((t) => {
           // deAPI wkleja timestampy inline w tekst → rozparsuj na segmenty (format z projektu + prev/next)
@@ -556,6 +566,15 @@ export function usePlaybackScreen({
     onConsumePending?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPlayId]);
+  // klawisz RECORDINGS → zawsze pokaż LISTĘ (widok persystuje między trybami; po nagraniu byłby stary PLAYER/CHAT)
+  useEffect(() => {
+    if (recordingsRequest > 0) {
+      try { player.pause(); } catch {} // gdyby player grał z poprzedniego widoku
+      setView('LIST');
+      setPhase('LIST');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordingsRequest]);
   const backToList = () => {
     if (sel?.uri) {
       try {
@@ -918,7 +937,7 @@ export function usePlaybackScreen({
             )}
           </View>
         </View>
-        <BottomBar active={playing} mono={mono} muted={false} level={sel?.samples && uiLen > 0 ? sel.samples[Math.min(sel.samples.length - 1, Math.floor((uiPos / uiLen) * sel.samples.length))] : null} />
+        <BottomBar active={playing} mono={mono} quality={quality} muted={false} level={sel?.samples && uiLen > 0 ? sel.samples[Math.min(sel.samples.length - 1, Math.floor((uiPos / uiLen) * sel.samples.length))] : null} />
       </>
     );
     return { content, keyboard, slider, goBack };
@@ -941,7 +960,7 @@ export function usePlaybackScreen({
         <View style={{ flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' }}>
           <Text style={{ fontFamily: font.timer.family, fontSize: 22, color: screen.olive.inactive }}>No recordings.</Text>
         </View>
-        <BottomBar active={false} mono={mono} muted={false} />
+        <BottomBar active={false} mono={mono} quality={quality} muted={false} />
       </>
     );
     return { content, keyboard };
@@ -1080,7 +1099,7 @@ export function usePlaybackScreen({
         </View>
         <View style={{ alignSelf: 'stretch', height: 2, borderRadius: 2, backgroundColor: screen.olive.primary, boxShadow: '0px 0px 4px 0px rgba(226,255,228,0.25)' } as any} />
       </View>
-      <BottomBar active={false} mono={mono} muted={false} />
+      <BottomBar active={false} mono={mono} quality={quality} muted={false} />
     </>
   );
 

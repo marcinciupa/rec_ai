@@ -369,7 +369,7 @@ export function useRecordingScreen({
           )}
         </View>
       </View>
-      <BottomBar active={state === 'RECORDING'} mono={mono} muted={false} level={capture.level} />
+      <BottomBar active={state === 'RECORDING'} mono={mono} quality={quality} muted={false} level={capture.level} />
     </>
   );
 

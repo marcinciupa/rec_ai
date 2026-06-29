@@ -52,6 +52,9 @@ export default function App() {
   const closeSettings = () => setMode(prevModeRef.current);
   // po zapisaniu nagrania PLAY przenosi do PLAYBACK i otwiera player tego pliku (autostart)
   const [pendingPlay, setPendingPlay] = useState<string | null>(null);
+  // żądanie pokazania LISTY nagrań (klawisz RECORDINGS) — licznik wymusza reset widoku playbacku na LIST,
+  // bo `view` w hooku persystuje (po nagraniu byłby stary PLAYER/CHAT zamiast listy)
+  const [recordingsReq, setRecordingsReq] = useState(0);
   // czat → tryb pisania: klawiatura systemowa, fullscreen + schowana dolna obudowa (slider/klawiatura/mic)
   const [chatTyping, setChatTyping] = useState(false);
   // onboarding (pierwsze uruchomienie): pytamy o domyślny język/motyw/fullscreen. null = jeszcze nie sprawdzono.
@@ -80,7 +83,7 @@ export default function App() {
     mode,
     onCycleMode: cycleMode,
     onOpenSettings: () => setMode('SETTINGS'),
-    onOpenRecordings: () => setMode('PLAYBACK'),
+    onOpenRecordings: () => { setRecordingsReq((n) => n + 1); setMode('PLAYBACK'); },
     onOpenPlayer: (id) => {
       setPendingPlay(id);
       setMode('PLAYBACK');
@@ -92,6 +95,7 @@ export default function App() {
   const playback = usePlaybackScreen({
     store: recStore,
     mono: settings.recordMono,
+    quality: settings.recordQuality,
     language: settings.language,
     showTimeLeft: settings.showTimeLeft,
     onTyping: setChatTyping,
@@ -102,6 +106,7 @@ export default function App() {
     transcription,
     pendingPlayId: pendingPlay,
     onConsumePending: () => setPendingPlay(null),
+    recordingsRequest: recordingsReq,
   });
   // tryb pisania w czacie wymusza fullscreen + schowaną dolną obudowę; po wyjściu wraca do ustawienia użytkownika
   const variant = settings.fullscreen || chatTyping ? 'fullscreen' : 'device';

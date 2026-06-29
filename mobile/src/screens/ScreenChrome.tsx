@@ -227,11 +227,13 @@ const METER_SEGMENTS = 6;
 export function BottomBar({
   active = false,
   mono = false,
+  quality = 'HIGH',
   muted = false,
   level = null,
 }: {
   active?: boolean;
   mono?: boolean;
+  quality?: 'HIGH' | 'LOW'; // COMPRESSION → label HQ (HIGH) / MQ (LOW)
   muted?: boolean;
   level?: number | null; // realny poziom 0..1 (metering); null = mock (losowo)
 }) {
@@ -283,7 +285,7 @@ export function BottomBar({
           ...phosphorGlow,
         }}
       >
-        {mono ? 'MONO/UHQ' : 'STEREO/UHQ'}
+        {`${mono ? 'MONO' : 'STEREO'}/${quality === 'LOW' ? 'MQ' : 'HQ'}`}
       </Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
         <ChannelBadge ch="R" />

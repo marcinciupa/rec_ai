@@ -101,6 +101,7 @@ export function useChatView({
   active,
   mode = 'PLAYBACK',
   mono = false,
+  quality = 'HIGH',
   language = 'en',
   nameLabel = '',
   onTypingChange,
@@ -110,6 +111,7 @@ export function useChatView({
   active: boolean;
   mode?: Mode;
   mono?: boolean;
+  quality?: 'HIGH' | 'LOW'; // COMPRESSION → label dolnego paska HQ/MQ
   language?: string;
   nameLabel?: string; // „nazwa (rozmiar)" wyświetlana pod chatem (Figma 289:6298)
   onTypingChange?: (on: boolean) => void; // wejście/wyjście trybu pisania (klawiatura systemowa → fullscreen)
@@ -324,7 +326,7 @@ export function useChatView({
           <Text numberOfLines={1} style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>~311h/32.3GB AVAILABLE</Text>
         </View>
       </View>
-      <BottomBar active={voice === 'listening'} mono={mono} muted={false} level={voice === 'listening' ? capture.level : null} />
+      <BottomBar active={voice === 'listening'} mono={mono} quality={quality} muted={false} level={voice === 'listening' ? capture.level : null} />
     </>
   );
 

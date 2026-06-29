@@ -401,6 +401,13 @@ export function useSettingsScreen({
         onAdjust: (dir: -1 | 1) => changeBy(dir),
       };
 
+  // stan dolnego paska z bieżących ustawień (RECORD MODE / COMPRESSION) — spójny z resztą ekranów
+  const barItems = sections.flatMap((s) => s.items);
+  const rmBar = barItems.find((it) => it.label === 'RECORD MODE');
+  const barMono = rmBar ? rmBar.options[rmBar.value] === 'MONO' : false;
+  const cpBar = barItems.find((it) => it.label === 'COMPRESSION');
+  const barQuality = (cpBar ? cpBar.options[cpBar.value] : 'HIGH') as 'HIGH' | 'LOW';
+
   const content = (
     <>
       <ScreenTopBar mode={mode} onCycleMode={onCycleMode} />
@@ -446,7 +453,7 @@ export function useSettingsScreen({
         </View>
       </ScrollView>
 
-      <BottomBar />
+      <BottomBar mono={barMono} quality={barQuality} />
       {infoOpen ? <InfoDialog /> : null}
     </>
   );
