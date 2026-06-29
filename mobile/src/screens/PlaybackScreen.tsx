@@ -64,6 +64,25 @@ const fmtShort = (sec: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
+// deAPI bywa zwraca timestampy INLINE w tekście („[0:00 - 0:46] tekst…") zamiast w polu segments.
+// Gdy segments puste, a tekst ma znaczniki [mm:ss - mm:ss] → parsujemy je na segmenty: kolumna czasu +
+// czysty tekst (jak w projekcie) i włączamy nawigację prev/next. Bez znaczników → bez zmian (fallback).
+const TS_INLINE_RE = /\[(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})\]/g;
+function withParsedSegments(t: Transcript | null): Transcript | null {
+  if (!t || (t.segments && t.segments.length) || !t.text) return t;
+  const text = t.text;
+  const matches = [...text.matchAll(TS_INLINE_RE)];
+  if (!matches.length) return t;
+  const segs = matches.map((m, i) => {
+    const start = Number(m[1]) * 60 + Number(m[2]);
+    const end = Number(m[3]) * 60 + Number(m[4]);
+    const from = (m.index ?? 0) + m[0].length;
+    const to = i + 1 < matches.length ? (matches[i + 1].index ?? text.length) : text.length;
+    return { start, end, text: text.slice(from, to).trim() };
+  });
+  return { ...t, segments: segs };
+}
+
 // waveform odtwarzania: stałe „nagrane" słupki; zagrana część jasna, reszta wygaszona
 const WAVE_N = 48;
 // mock (pliki demo bez nagranej obwiedni)
@@ -115,14 +134,15 @@ function TranscriptRow({ startN, endN, endLabel, text, posSec, onSeek }: { start
   }
   // timestampy niezależnie od tekstu: cała para jasna gdy sekcja się zaczęła; bieżąca = glow
   const started = posSec >= startN;
+  // CAŁY segment klikalny → seek do jego startu + odtwarzanie (onSeek)
   return (
-    <View style={{ flexDirection: 'row', alignSelf: 'stretch', gap: 8 }}>
-      <Pressable onPress={() => onSeek?.(startN)} hitSlop={6} style={{ justifyContent: 'center' }}>
+    <Pressable onPress={() => onSeek?.(startN)} style={{ flexDirection: 'row', alignSelf: 'stretch', gap: 8 }}>
+      <View style={{ justifyContent: 'center' }}>
         <Text style={{ ...cap, color: started ? bright : dim, ...(current ? glow('rgba(226,255,228,0.25)') : null) }}>{fmtShort(startN)}</Text>
         <Text style={{ ...cap, color: started ? bright : dim, marginTop: -2 }}>{endLabel}</Text>
-      </Pressable>
+      </View>
       <Text style={{ ...body, flex: 1 }}>{bodyNode}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -229,7 +249,7 @@ function RowOption({ label, active, risk, onPress }: { label: string; active: bo
  * Wiersz listy: [AI] nazwa … data. Zaznaczony = tło phosphor + ciemny tekst + glow, i rozwija POD nazwą
  * rząd opcji menu (Figma 161:12289) — aktywną przełącza knob lub klawisz MENU [CYCLE], tap wykonuje. Na web hover zaznacza.
  */
-function Row({ rec, name, selected, onSelect, options, focus }: { rec: Rec; name: string; selected: boolean; onSelect: () => void; options: RowActionDef[]; focus: number }) {
+function Row({ rec, name, selected, onSelect, options, focus, innerRef }: { rec: Rec; name: string; selected: boolean; onSelect: () => void; options: RowActionDef[]; focus: number; innerRef?: (node: View | null) => void }) {
   const fg = selected ? color.dark21 : screen.olive.primary;
   const iconColor = selected
     ? rec.transcribed
@@ -240,6 +260,7 @@ function Row({ rec, name, selected, onSelect, options, focus }: { rec: Rec; name
       : screen.olive.inactive;
   return (
     <View
+      ref={innerRef as any}
       style={{
         borderRadius: 2,
         padding: 4,
@@ -365,10 +386,39 @@ export function usePlaybackScreen({
   const scrubStartPos = useRef(0); // pozycja na starcie przewijania (czy zaczęliśmy na 0)
   const scrubLevel = useRef(0); // ostatni bieg (haptyka „mocniej na wyższym biegu")
   const continuousOn = useRef(false); // trwa ciągła wibracja (granica / zatrzymane odtwarzanie)
+  // auto-scroll listy nagrań (lookahead — jak w Settings): trzyma zaznaczone nagranie w widoku + sąsiada
+  const listScrollRef = useRef<ScrollView>(null);
+  const listContentRef = useRef<View>(null);
+  const listRowRefs = useRef<Map<string, View>>(new Map());
+  const listOffset = useRef(0);
+  const listViewport = useRef(0);
 
   const idx = Math.max(0, recs.findIndex((r) => r.id === selId));
   const sel: Rec | undefined = recs[idx];
   const len = sel?.lengthSec ?? 0;
+
+  // trzyma zaznaczone nagranie w widoku + lookahead ~jednego wiersza, by widać było sąsiednie nagranie.
+  const scrollToSelectedRec = () => {
+    const node = listRowRefs.current.get(selId);
+    if (!node || !listContentRef.current || !listScrollRef.current) return;
+    const pad = 8;
+    const look = 44;
+    node.measureLayout(
+      listContentRef.current as any,
+      (_x, y, _w, h) => {
+        const top = listOffset.current;
+        const vh = listViewport.current;
+        if (y - pad - look < top) {
+          listScrollRef.current?.scrollTo({ y: Math.max(0, y - pad - look), animated: true });
+        } else if (vh > 0 && y + h + pad + look > top + vh) {
+          listScrollRef.current?.scrollTo({ y: y + h + pad + look - vh, animated: true });
+        }
+      },
+      () => {}
+    );
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { scrollToSelectedRec(); }, [selId]);
 
   // realny odtwarzacz pliku (gdy nagranie ma uri); demo (bez uri) = mock niżej. Web → stub no-op.
   const { player, status: pstatus } = usePlayer();
@@ -438,7 +488,8 @@ export function usePlaybackScreen({
     if (view === 'PLAYER' && sel?.transcribed && sel?.id) {
       getTranscript(sel.id)
         .then((t) => {
-          if (alive) setTranscript(t);
+          // deAPI wkleja timestampy inline w tekst → rozparsuj na segmenty (format z projektu + prev/next)
+          if (alive) setTranscript(withParsedSegments(t));
         })
         .catch(() => {});
     } else {
@@ -981,21 +1032,32 @@ export function usePlaybackScreen({
     <>
       <ScreenTopBar mode={mode} onCycleMode={overlay ? undefined : onCycleMode} ai={ai} labelActive={false} />
       <View style={{ flex: 1, alignSelf: 'stretch', paddingHorizontal: 16, paddingTop: 8 }}>
-        {/* DETAILS ma własny scrim (jak INFO) → NIE przyciemniaj listy, inaczej podwójne ciemne tło.
-            CONFIRM/DELETED mają pełny panel → dim listy zostaje. */}
-        <View style={{ gap: 8, opacity: phase === 'CONFIRM' || phase === 'DELETED' ? 0.35 : 1 }}>
-          {recs.map((r) => (
-            <Row
-              key={r.id}
-              rec={r}
-              name={displayName(r, recs)}
-              selected={r.id === selId}
-              onSelect={() => selectRec(r.id)}
-              options={r.id === selId ? menuOptions : []}
-              focus={mFocus}
-            />
-          ))}
-        </View>
+        {/* lista przewijalna z auto-scrollem do zaznaczonego (+lookahead); overlaye zostają NAD nią (poza scrollem) */}
+        <ScrollView
+          ref={listScrollRef}
+          style={{ flex: 1, alignSelf: 'stretch' }}
+          showsVerticalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={(e) => { listOffset.current = e.nativeEvent.contentOffset.y; }}
+          onLayout={(e) => { listViewport.current = e.nativeEvent.layout.height; }}
+        >
+          {/* DETAILS ma własny scrim (jak INFO) → NIE przyciemniaj listy, inaczej podwójne ciemne tło.
+              CONFIRM/DELETED mają pełny panel → dim listy zostaje. */}
+          <View ref={listContentRef} style={{ gap: 8, opacity: phase === 'CONFIRM' || phase === 'DELETED' ? 0.35 : 1 }}>
+            {recs.map((r) => (
+              <Row
+                key={r.id}
+                innerRef={(node) => { if (node) listRowRefs.current.set(r.id, node); else listRowRefs.current.delete(r.id); }}
+                rec={r}
+                name={displayName(r, recs)}
+                selected={r.id === selId}
+                onSelect={() => selectRec(r.id)}
+                options={r.id === selId ? menuOptions : []}
+                focus={mFocus}
+              />
+            ))}
+          </View>
+        </ScrollView>
         {phase === 'DETAILS' && sel ? (
           <DetailsPanel
             rows={[
