@@ -277,15 +277,16 @@ export function useSettingsScreen({
     const node = rowRefs.current.get(selected);
     if (!node || !contentRef.current || !scrollRef.current) return;
     const pad = 8;
+    const look = 44; // „lookahead": rezerwa ~jednego wiersza, by sąsiednia opcja (np. INFO pod HANDED) była widoczna
     node.measureLayout(
       contentRef.current as any,
       (_x, y, _w, h) => {
         const top = offsetRef.current;
         const vh = viewportRef.current;
-        if (y - pad < top) {
-          scrollRef.current?.scrollTo({ y: Math.max(0, y - pad), animated: true });
-        } else if (vh > 0 && y + h + pad > top + vh) {
-          scrollRef.current?.scrollTo({ y: y + h + pad - vh, animated: true });
+        if (y - pad - look < top) {
+          scrollRef.current?.scrollTo({ y: Math.max(0, y - pad - look), animated: true });
+        } else if (vh > 0 && y + h + pad + look > top + vh) {
+          scrollRef.current?.scrollTo({ y: y + h + pad + look - vh, animated: true });
         }
       },
       () => {}
