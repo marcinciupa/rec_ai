@@ -318,6 +318,18 @@ export function useSettingsScreen({
     changeAt(idx, 1);
   };
 
+  // Klawisz #1 dopasowany do kontekstu zaznaczonego wiersza (jak action-key w menu pod nazwą pliku
+  // na liście nagrań): wiersz-akcja → SHOW INFO; przełącznik ON/OFF → TURN OFF/TURN ON wg stanu;
+  // wielo-opcja (THEME, AI LANGUAGE) → CHANGE. Akcja klawisza ta sama (changeBy), zmienia się etykieta.
+  const selItem = flatItems[selected];
+  const key1Label = !selItem
+    ? 'CHANGE'
+    : selItem.action
+      ? 'SHOW INFO'
+      : selItem.options.length === 2 && selItem.options.includes('OFF') && selItem.options.includes('ON')
+        ? (selItem.options[selItem.value] === 'ON' ? 'TURN OFF' : 'TURN ON')
+        : 'CHANGE';
+
   const keyboard: KeyboardConfig = infoOpen
     ? {
         // nakładka INFO: CLOSE (lub fizyczny BACK) zamyka dialog
@@ -326,7 +338,7 @@ export function useSettingsScreen({
       }
     : {
         screen: [
-          { label: 'CHANGE', variant: 'primary', onPress: () => changeBy(1) },
+          { label: key1Label, variant: 'primary', onPress: () => changeBy(1) },
           { label: '' },
           { label: 'NEXT', supporting: '[CYCLE]', onPress: () => move(1) },
         ],
