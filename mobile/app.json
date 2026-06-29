@@ -13,6 +13,7 @@
     "android": {
       "package": "com.glue010.recai",
       "versionCode": 961,
+      "blockedPermissions": ["android.permission.ACTIVITY_RECOGNITION"],
       "adaptiveIcon": {
         "backgroundColor": "#FF3636",
         "foregroundImage": "./assets/android-icon-foreground.png",
