@@ -30,6 +30,11 @@ const phosphorGlow = {
   textShadowOffset: { width: 0, height: 0 },
 } as const;
 
+// długie pojedyncze słowa na labelach klawiszy → ręczny podział na 2 linie z dywizem
+// (jak RECORD-\nINGS / TRANS-\nCRIBE). Patrz memory feedback_key_label_wrap.
+const KEY_WRAP: Record<string, string> = { REMAINING: 'REMAIN-\nING' };
+const keyWrap = (s: string) => KEY_WRAP[s] ?? s;
+
 /** Nagłówek sekcji (RECORDING / PLAYBACK / OTHER) — wyśrodkowany, phosphor. */
 function SectionHeader({ children }: { children: ReactNode }) {
   return (
@@ -168,7 +173,7 @@ const INITIAL_SECTIONS: SectionData[] = [
       { label: 'AUTO TRANSCRIBE', options: ['OFF', 'ON'], value: 1 },
       // język pytań i odpowiedzi AI (czat). Domyślnie ENGLISH.
       { label: 'AI LANGUAGE', options: ['ENGLISH', 'POLISH'], value: 0 },
-      { label: 'SHOW TIME LEFT', options: ['OFF', 'ON'], value: 0 },
+      { label: 'PLAYBACK TIMER', options: ['ELAPSED', 'REMAINING'], value: 0 },
     ],
   },
   {
@@ -318,16 +323,20 @@ export function useSettingsScreen({
   };
 
   // Klawisz #1 dopasowany do kontekstu zaznaczonego wiersza (jak action-key w menu pod nazwą pliku
-  // na liście nagrań): wiersz-akcja → SHOW INFO; przełącznik ON/OFF → TURN OFF/TURN ON wg stanu;
-  // wielo-opcja (THEME, AI LANGUAGE) → CHANGE. Akcja klawisza ta sama (changeBy), zmienia się etykieta.
+  // na liście nagrań) — pokazuje WARTOŚĆ, NA KTÓRĄ przełączy (głęboka kontekstowość):
+  //  • wiersz-akcja (INFO) → SHOW INFO
+  //  • przełącznik ON/OFF → TURN ON / TURN OFF (wg stanu)
+  //  • wielo-opcja (PLAYBACK TIMER, THEME, AI LANGUAGE) → następna wartość, np. ELAPSED → REMAIN-ING
+  // Akcja klawisza ta sama (changeBy → następna opcja), zmienia się tylko etykieta.
   const selItem = flatItems[selected];
+  const nextOpt = selItem ? selItem.options[(selItem.value + 1) % selItem.options.length] : '';
   const key1Label = !selItem
     ? 'CHANGE'
     : selItem.action
       ? 'SHOW INFO'
       : selItem.options.length === 2 && selItem.options.includes('OFF') && selItem.options.includes('ON')
         ? (selItem.options[selItem.value] === 'ON' ? 'TURN OFF' : 'TURN ON')
-        : 'CHANGE';
+        : keyWrap(nextOpt);
 
   const keyboard: KeyboardConfig = infoOpen
     ? {
@@ -426,8 +435,8 @@ export function useSettingsScreen({
   const recordMono = rmItem ? rmItem.options[rmItem.value] === 'ON' : false;
   const langItem = flat.find((it) => it.label === 'AI LANGUAGE');
   const language = (langItem ? langItem.options[langItem.value] : 'ENGLISH') === 'POLISH' ? 'pl' : 'en';
-  const stlItem = flat.find((it) => it.label === 'SHOW TIME LEFT');
-  const showTimeLeft = stlItem ? stlItem.options[stlItem.value] === 'ON' : false;
+  const ptItem = flat.find((it) => it.label === 'PLAYBACK TIMER');
+  const showTimeLeft = ptItem ? ptItem.options[ptItem.value] === 'REMAINING' : false;
   const ksoItem = flat.find((it) => it.label === 'KEEP SCREEN ON');
   const keepScreenOn = ksoItem ? ksoItem.options[ksoItem.value] === 'ON' : false;
 
