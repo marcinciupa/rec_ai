@@ -74,8 +74,10 @@ export function Keyboard({ config = EMPTY_KEYBOARD }: { config?: KeyboardConfig 
       >
         <Row>
           {config.screen.map((k, i) => (
+            // key = pozycja+label: zmiana klawisza w danym slocie REMONTUJE go → cleanup czyści hold-timer
+            // (inaczej z key={i} instancja przeżywa zmianę ekranu i [HOLD] mógł wypalić po nawigacji).
             <ScreenKey
-              key={i}
+              key={`${i}:${k.label}`}
               label={k.label}
               supporting={k.supporting}
               variant={k.variant}

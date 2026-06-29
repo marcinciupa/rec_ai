@@ -219,7 +219,7 @@ export default function App() {
           theme={settings.theme}
           motion={settings.motion}
           keyboard={finalKeyboard}
-          slider={showWelcome ? undefined : slider}
+          slider={slider}
           hideControls={chatTyping}
           onPinch={(dir) => settings.setFullscreen(dir === 'out')}
         >

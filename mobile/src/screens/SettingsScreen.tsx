@@ -175,7 +175,7 @@ const INITIAL_SECTIONS: SectionData[] = [
       // brak stereo → MONO wymuszony i zablokowany
       { label: 'RECORD MODE', options: ['STEREO', 'MONO'], value: STEREO_CAPABLE ? 0 : 1, locked: !STEREO_CAPABLE },
       // jakość AAC (bitrate). HIGH = większy plik [BIG], LOW = mniejszy [SMALL].
-      { label: 'COMPRESSION', options: ['HIGH', 'LOW'], hints: ['[BIG]', '[SMALL]'], value: 0 },
+      { label: 'QUALITY', options: ['HIGH', 'LOW'], hints: ['[BIG]', '[SMALL]'], value: 0 },
     ],
   },
   {
@@ -194,7 +194,7 @@ const INITIAL_SECTIONS: SectionData[] = [
       // język interfejsu (osobny od AI LANGUAGE). SYSTEM DEFAULT = język z systemu. INFRA: na main brak
       // jeszcze warstwy tłumaczeń (i18n) → uiLang gotowy, ale UI zostaje EN do czasu nałożenia i18n.
       { label: 'UI LANGUAGE', options: ['SYSTEM DEFAULT', 'ENGLISH', 'POLISH'], value: 0 },
-      { label: 'VIEW', options: ['DEVICE', 'FULLSCREEN'], value: 0 },
+      { label: 'VIEW', options: ['DEVICE', 'FULLSCREEN'], value: 1 }, // domyślnie FULLSCREEN
       { label: 'MOTION', options: ['OFF', 'ON'], value: 1 },
       { label: 'HANDED', options: ['RIGHT', 'LEFT'], value: 0 },
       // wiersz-akcja: otwiera dialog z informacjami o aplikacji (wersja, AI itp.)
@@ -244,7 +244,10 @@ export function useSettingsScreen({
             prev.map((sec) => ({
               ...sec,
               items: sec.items.map((it) =>
-                !it.locked && saved[it.label] != null && saved[it.label] < it.options.length
+                !it.locked &&
+                Number.isInteger(saved[it.label]) &&
+                saved[it.label] >= 0 &&
+                saved[it.label] < it.options.length
                   ? { ...it, value: saved[it.label] }
                   : it
               ),
@@ -405,7 +408,7 @@ export function useSettingsScreen({
   const barItems = sections.flatMap((s) => s.items);
   const rmBar = barItems.find((it) => it.label === 'RECORD MODE');
   const barMono = rmBar ? rmBar.options[rmBar.value] === 'MONO' : false;
-  const cpBar = barItems.find((it) => it.label === 'COMPRESSION');
+  const cpBar = barItems.find((it) => it.label === 'QUALITY');
   const barQuality = (cpBar ? cpBar.options[cpBar.value] : 'HIGH') as 'HIGH' | 'LOW';
 
   const content = (
@@ -472,7 +475,7 @@ export function useSettingsScreen({
   const autoTranscribe = atItem ? atItem.options[atItem.value] === 'AUTO' : false;
   const rmItem = flat.find((it) => it.label === 'RECORD MODE');
   const recordMono = rmItem ? rmItem.options[rmItem.value] === 'MONO' : false;
-  const compItem = flat.find((it) => it.label === 'COMPRESSION');
+  const compItem = flat.find((it) => it.label === 'QUALITY');
   const recordQuality = (compItem ? compItem.options[compItem.value] : 'HIGH') as 'HIGH' | 'LOW';
   const langItem = flat.find((it) => it.label === 'AI LANGUAGE');
   const language = (langItem ? langItem.options[langItem.value] : 'ENGLISH') === 'POLISH' ? 'pl' : 'en';

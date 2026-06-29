@@ -157,16 +157,19 @@ export async function deleteRecording(id: string): Promise<void> {
 // ── Transcripts (powierzchnia pod Fazę 3) ──
 export async function saveTranscript(t: Transcript): Promise<void> {
   const db = await getDb();
+  // WHERE EXISTS = atomowa gwarancja: jeśli nagranie zostało usunięte (np. w trakcie transkrypcji),
+  // NIE piszemy osieroconego wiersza transkryptu (brak FK/cascade w schemacie). Jeden statement → bez TOCTOU.
   await db.runAsync(
     `INSERT OR REPLACE INTO transcripts (recording_id, text, segments, language, status, job_id, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+     SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM recordings WHERE id = ?)`,
     t.recordingId,
     t.text ?? null,
     t.segments ? JSON.stringify(t.segments) : null,
     t.language ?? null,
     t.status,
     t.jobId ?? null,
-    Date.now()
+    Date.now(),
+    t.recordingId
   );
 }
 
@@ -210,12 +213,15 @@ export async function getResumableTranscriptions(): Promise<string[]> {
 // ── Messages (powierzchnia pod Fazę 3) ──
 export async function addMessage(m: Omit<ChatMessage, 'id'>): Promise<void> {
   const db = await getDb();
+  // jw. — nie dopisuj wiadomości czatu do usuniętego nagrania (atomowy WHERE EXISTS)
   await db.runAsync(
-    'INSERT INTO messages (recording_id, role, content, created_at) VALUES (?, ?, ?, ?)',
+    `INSERT INTO messages (recording_id, role, content, created_at)
+     SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM recordings WHERE id = ?)`,
     m.recordingId,
     m.role,
     m.content,
-    m.createdAt
+    m.createdAt,
+    m.recordingId
   );
 }
 

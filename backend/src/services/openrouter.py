@@ -23,7 +23,9 @@ class OpenRouterClient:
             raise OpenRouterError("OPENROUTER_API_KEY not configured")
         model = model or self.s.llm_chat_model
         # język odpowiedzi sterowany ustawieniem aplikacji; brak/nieznany → English (domyślny)
-        lang_name = {"en": "English", "pl": "Polish"}.get((language or "en").lower(), "English")
+        lang_name = {"en": "English", "pl": "Polish", "de": "German", "es": "Spanish", "fr": "French"}.get(
+            (language or "en").lower(), "English"
+        )
         system = (
             "You are REC_AI, an assistant that helps the user talk about ONE of their voice notes. "
             f"Always answer in {lang_name}, regardless of the language of the transcript or the question. "
@@ -50,7 +52,10 @@ class OpenRouterClient:
             raise OpenRouterError(f"request failed: {e}")
         if r.status_code >= 400:
             raise OpenRouterError(f"{r.status_code}: {r.text[:300]}")
-        data = json.loads(r.content)  # bytes→UTF-8 (nie zgadujemy charsetu jak httpx .json()/.text)
+        try:
+            data = json.loads(r.content)  # bytes→UTF-8 (nie zgadujemy charsetu jak httpx .json()/.text)
+        except ValueError:
+            raise OpenRouterError(f"non-JSON response (2xx): {r.text[:200]}")
         try:
             answer = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):

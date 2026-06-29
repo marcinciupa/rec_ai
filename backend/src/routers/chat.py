@@ -1,7 +1,7 @@
 """POST /api/v1/chat — czat o pojedynczej notatce (OpenRouter)."""
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..deps import require_device_id
+from ..deps import require_client
 from ..schemas import ChatRequest, ChatResponse
 from ..services.openrouter import OpenRouterError
 
@@ -12,7 +12,7 @@ router = APIRouter(tags=["chat"])
 async def chat(
     request: Request,
     body: ChatRequest,
-    device_id: str = Depends(require_device_id),
+    device_id: str = Depends(require_client),
 ) -> ChatResponse:
     client = request.app.state.openrouter
     try:

@@ -14,6 +14,8 @@ from ..services.deapi import _extract_request_id, parse_transcript_payload
 router = APIRouter(tags=["webhooks"])
 log = structlog.get_logger()
 
+_MAX_WEBHOOK_BYTES = 1024 * 1024  # 1 MB — webhook to metadane (+ ewentualnie krótki wynik); reszta za result_url
+
 
 @router.post("/webhooks/deapi")
 async def deapi_webhook(
@@ -23,7 +25,14 @@ async def deapi_webhook(
     x_deapi_event: str | None = Header(default=None),
 ) -> dict:
     settings = request.app.state.settings
+    # ODRZUĆ duże body ZANIM je zbuforujemy (endpoint jest nieuwierzytelniony do czasu HMAC → inaczej
+    # wielogigabajtowy POST wyczerpałby pamięć). Najpierw Content-Length, potem twardy limit po odczycie.
+    clen = request.headers.get("content-length")
+    if clen and clen.isdigit() and int(clen) > _MAX_WEBHOOK_BYTES:
+        raise HTTPException(status_code=413, detail="webhook body too large")
     raw = await request.body()
+    if len(raw) > _MAX_WEBHOOK_BYTES:
+        raise HTTPException(status_code=413, detail="webhook body too large")
 
     ok, err = verify_deapi_signature(
         secret=settings.deapi_webhook_secret,

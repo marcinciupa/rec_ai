@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     api_cors_origins: str = "*"
     max_upload_mb: int = 20  # deAPI: audio ≤ 20 MB
 
+    # Sekret współdzielony aplikacja↔backend (nagłówek X-App-Key). Bez niego /chat i /transcriptions to
+    # OTWARTE proxy do płatnych kluczy deAPI/OpenRouter. W produkcji WYMAGANY (fail-closed w deps).
+    app_api_key: str | None = None
+    rate_limit_per_min: int = 30  # limit zapytań/min na urządzenie (X-Device-Id) — anty-nadużycie
+
     # Publiczny URL TEGO backendu — z niego budujemy adres webhooka deAPI.
     # Lokalnie potrzebny tunel (cloudflared/ngrok), żeby deAPI mogło nas dosięgnąć.
     api_public_url: str | None = None

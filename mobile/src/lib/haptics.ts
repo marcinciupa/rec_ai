@@ -67,6 +67,16 @@ export function hapticShort() {
   play([45]);
 }
 
+/** Start nagrywania: jeden DŁUŻSZY buzz (wyraźne „zaczęło się"). */
+export function hapticRecordStart() {
+  play([350]);
+}
+
+/** Koniec nagrywania: PODWÓJNY buzz („buzz-buzz") — odróżnialny od startu. */
+export function hapticRecordStop() {
+  play([200, 110, 200]);
+}
+
 /** Knob: krótki impuls o sile proporcjonalnej do wychylenia (wywoływany throttlowany w trakcie ruchu). */
 export function hapticKnob(intensity: number) {
   play(pwm([{ ms: 28, from: intensity }]));

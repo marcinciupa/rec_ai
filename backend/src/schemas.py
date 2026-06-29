@@ -1,5 +1,5 @@
 """Modele Pydantic dla kontraktu API (to, co widzi aplikacja mobilna)."""
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Segment(BaseModel):
@@ -19,13 +19,14 @@ class TranscriptionResponse(BaseModel):
 
 class ChatMessage(BaseModel):
     role: str  # user | assistant
-    content: str
+    content: str = Field(max_length=8000)
 
 
 class ChatRequest(BaseModel):
-    transcript: str
-    messages: list[ChatMessage] = []
-    question: str
+    # limity = ochrona przed nadmuchanym promptem do OpenRouter (koszt + pamięć)
+    transcript: str = Field(max_length=100_000)
+    messages: list[ChatMessage] = Field(default=[], max_length=50)
+    question: str = Field(max_length=4000)
     model: str | None = None
     language: str | None = None  # kod języka odpowiedzi AI (np. "en", "pl"); brak → English
 

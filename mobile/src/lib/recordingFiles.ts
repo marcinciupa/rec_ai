@@ -1,6 +1,7 @@
 /**
  * Trwałe przechowywanie plików audio (natywnie). Nagranie powstaje w cache (useAudioCapture);
- * tu przenosimy je do documentDirectory/recordings/<id>.aac, żeby OS nie skasował cache.
+ * tu przenosimy je do documentDirectory/recordings/<id>.<ext> (ext ze źródła: .m4a teraz / .aac dawne),
+ * żeby OS nie skasował cache.
  *
  * Używamy `expo-file-system/legacy` (operacje na surowych uri), bo nowy File API v56 ma
  * scoped-permissions i ODRZUCA dostęp do uri nagrania z expo-audio ("Missing 'READ' permission").
@@ -15,11 +16,20 @@ export async function persistRecording(cacheUri: string, id: string): Promise<{ 
   try {
     await FileSystem.makeDirectoryAsync(DIR, { intermediates: true });
   } catch {}
-  const dest = DIR + id + '.aac';
+  // zachowaj rozszerzenie źródła (.m4a teraz / .aac z dawnych nagrań) — bez twardego kodu formatu
+  const ext = (cacheUri.match(/\.[a-z0-9]+$/i)?.[0] ?? '.m4a').toLowerCase();
+  const dest = DIR + id + ext;
   try {
     await FileSystem.deleteAsync(dest, { idempotent: true }); // nadpisanie (id unikalne; to zabezpieczenie)
   } catch {}
-  await FileSystem.moveAsync({ from: cacheUri, to: dest });
+  // move bywa zawodne między wolumenami → fallback na copy+delete. Gdy oba padną, RZUĆ (caller zachowa
+  // wtedy uri z cache — lepiej grające-teraz niż utracone; ale nie udajemy że trwały zapis się udał).
+  try {
+    await FileSystem.moveAsync({ from: cacheUri, to: dest });
+  } catch {
+    await FileSystem.copyAsync({ from: cacheUri, to: dest }); // rzuci dalej, jeśli i to się nie uda
+    try { await FileSystem.deleteAsync(cacheUri, { idempotent: true }); } catch {}
+  }
   let sizeBytes: number | undefined;
   try {
     const info = await FileSystem.getInfoAsync(dest);
@@ -45,10 +55,11 @@ export async function cleanupOrphanFiles(validIds: string[]): Promise<void> {
   try {
     const info = await FileSystem.getInfoAsync(DIR);
     if (!info.exists) return;
-    const keep = new Set(validIds.map((id) => id + '.aac'));
+    const keep = new Set(validIds); // dopasowanie po samym id (bez rozszerzenia: .m4a/.aac)
     const names = await FileSystem.readDirectoryAsync(DIR);
     for (const name of names) {
-      if (!keep.has(name)) {
+      const baseId = name.replace(/\.[^.]+$/, '');
+      if (!keep.has(baseId)) {
         try {
           await FileSystem.deleteAsync(DIR + name, { idempotent: true });
         } catch {}

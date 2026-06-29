@@ -15,8 +15,11 @@ export function useTilt(enabled: boolean) {
 
   useEffect(() => {
     if (!enabled) {
-      Animated.timing(tx, { toValue: 0, duration: 200, useNativeDriver: true }).start();
-      Animated.timing(ty, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+      // useNativeDriver: false ŚWIADOMIE — tx/ty są karmione przez setValue (JS) i wpięte w JS-driven
+      // style (translateX/opacity) u konsumentów; native driver na tej samej wartości nie zadziała (reset
+      // by nie wrócił do środka — parallax zamarzłby na ostatnim przechyle).
+      Animated.timing(tx, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+      Animated.timing(ty, { toValue: 0, duration: 200, useNativeDriver: false }).start();
       return;
     }
 
@@ -24,8 +27,8 @@ export function useTilt(enabled: boolean) {
       const onMove = (e: PointerEvent) => {
         const nx = (e.clientX / window.innerWidth) * 2 - 1;
         const ny = (e.clientY / window.innerHeight) * 2 - 1;
-        Animated.timing(tx, { toValue: clamp(nx, -1, 1), duration: 120, useNativeDriver: true }).start();
-        Animated.timing(ty, { toValue: clamp(ny, -1, 1), duration: 120, useNativeDriver: true }).start();
+        Animated.timing(tx, { toValue: clamp(nx, -1, 1), duration: 120, useNativeDriver: false }).start();
+        Animated.timing(ty, { toValue: clamp(ny, -1, 1), duration: 120, useNativeDriver: false }).start();
       };
       window.addEventListener('pointermove', onMove);
       return () => window.removeEventListener('pointermove', onMove);
@@ -38,7 +41,7 @@ export function useTilt(enabled: boolean) {
     const { Accelerometer } = require('expo-sensors');
 
     const start = () => {
-      Accelerometer.setUpdateInterval(33);
+      Accelerometer.setUpdateInterval(50); // ~20 Hz wystarcza do parallaxu; mniej fan-outu po JS niż 30 Hz
       sub = Accelerometer.addListener(({ x, y }: { x: number; y: number }) => {
         // x: przechylenie lewo/prawo, y: przód/tył (odwrócone, by parallax był „naturalny")
         tx.setValue(clamp(x, -1, 1));

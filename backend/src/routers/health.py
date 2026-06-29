@@ -6,6 +6,9 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 async def health(request: Request) -> dict:
     s = request.app.state.settings
+    # publicznie minimalnie — nie ujawniaj configu/URL-a webhooka/stanu kluczy. Szczegóły tylko poza produkcją.
+    if s.environment == "production":
+        return {"status": "ok"}
     return {
         "status": "ok",
         "environment": s.environment,

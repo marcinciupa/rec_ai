@@ -1,13 +1,12 @@
 /**
  * useAudioCapture — realne nagrywanie mikrofonem (expo-audio, SDK56). Tylko natywnie.
  *
- * MUTE/PAUSE = SEGMENTY: zamiast MediaRecorder.pause() (zawodne na Androidzie — nie zatrzymuje
- * realnie capture'u) faktycznie KOŃCZYMY segment (recorder.stop) i na wznowieniu startujemy nowy.
- * Dzięki temu mikrofon naprawdę przestaje nagrywać. Format = AAC ADTS (.aac), bo takie pliki
- * można skleić zwykłym złączeniem bajtów (m4a/mp4 NIE) — na stop() łączymy segmenty w jeden plik.
+ * Format = AAC w kontenerze MPEG-4 (.m4a) — SEEKOWALNY (ADTS .aac NIE jest: Android MediaPlayer nie
+ * potrafi w nim przewijać i seekTo wraca do 0 → tap/prev-next/scrub „odtwarzają od początku").
  *
- * TODO (po potwierdzeniu segmentów na urządzeniu): wstawianie ciszy o długości przerwy między
- * segmentami, żeby długość nagrania = czas na timerze (na razie „cut" — wyciszony fragment pominięty).
+ * PAUSE = NATYWNA pauza MediaRecorder (expo-audio `recorder.pause()` → `record()` woła `resume()` na
+ * tym samym pliku; wymaga API 24+, mamy minSdk 24). Jeden ciągły plik m4a — bez sklejania bajtów
+ * (m4a/mp4 ma kontener z moov atom, więc bajtowo skleić się NIE da; dlatego porzucamy stare segmenty).
  */
 import { Platform } from 'react-native';
 import {
@@ -16,19 +15,20 @@ import {
   setAudioModeAsync,
   requestRecordingPermissionsAsync,
 } from 'expo-audio';
-import { File, Paths } from 'expo-file-system';
+import { File } from 'expo-file-system';
 import { useRef } from 'react';
 
 const REAL = Platform.OS !== 'web';
 
-// AAC ADTS mono — segmenty sklejalne bajtowo; mono upraszcza ewentualną ciszę i wystarcza dyktafonowi.
+// AAC w kontenerze MPEG-4 (.m4a) — seekowalny (indeks/moov atom). Android: outputFormat 'mpeg4' + enkoder
+// 'aac'. iOS: 'aac ' (= MPEG4AAC) w .m4a. Mono wystarcza dyktafonowi (RECORD MODE STEREO nadpisuje kanały).
 const REC_OPTIONS: any = {
-  extension: '.aac',
+  extension: '.m4a',
   sampleRate: 44100,
   numberOfChannels: 1,
   bitRate: 96000,
   isMeteringEnabled: true,
-  android: { outputFormat: 'aac_adts', audioEncoder: 'aac' },
+  android: { outputFormat: 'mpeg4', audioEncoder: 'aac' },
   ios: { outputFormat: 'aac ', audioQuality: 0x7f, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
 };
 
@@ -40,23 +40,9 @@ export function useAudioCapture() {
   const recorder = useAudioRecorder(REC_OPTIONS);
   const state = useAudioRecorderState(recorder);
   const level = normLevel(state?.metering);
-  const segments = useRef<string[]>([]); // uri kolejnych segmentów (między pauzami)
-  // PEŁNE opcje nagrania (RECORD MODE/COMPRESSION) — te same dla wszystkich segmentów, żeby sklejanie AAC
-  // zadziałało. WAŻNE: musi być PEŁNY obiekt (REC_OPTIONS + nadpisania), bo prepareToRecordAsync(Partial)
-  // gubił format AAC ADTS (extension/outputFormat) → plik w złym formacie i transkrypcja nie działała.
+  // PEŁNE opcje nagrania (RECORD MODE/COMPRESSION). MUSI być PEŁNY obiekt (REC_OPTIONS + nadpisania), bo
+  // prepareToRecordAsync(Partial) gubił format/extension → plik w złym formacie i transkrypcja nie działała.
   const fmtRef = useRef<any>(REC_OPTIONS);
-
-  const beginSegment = async () => {
-    await recorder.prepareToRecordAsync(fmtRef.current);
-    recorder.record();
-  };
-  // zakończ bieżący segment i zachowaj jego uri
-  const endSegment = async () => {
-    try {
-      await recorder.stop();
-      if (recorder.uri) segments.current.push(recorder.uri);
-    } catch {}
-  };
 
   // po nagraniu wróć do trybu ODTWARZANIA — inaczej sesja zostaje w „record" (iOS PlayAndRecord)
   // i odtwarzacz nie gra po powrocie z czatu (klawisz PLAY „nie działa"). Wołane na stop i discard.
@@ -74,67 +60,32 @@ export function useAudioCapture() {
       if (!granted) return false;
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
       // RECORD MODE → kanały (stereo=2/mono=1); COMPRESSION → bitrate (HIGH=192k [BIG] / LOW=64k [SMALL]).
-      // PEŁNE opcje (spread REC_OPTIONS) — zachowaj AAC ADTS/extension, nadpisz tylko kanały/bitrate.
+      // PEŁNE opcje (spread REC_OPTIONS) — zachowaj kontener/extension, nadpisz tylko kanały/bitrate.
       fmtRef.current = { ...REC_OPTIONS, numberOfChannels: opts?.stereo ? 2 : 1, bitRate: opts?.quality === 'LOW' ? 64000 : 192000 };
-      segments.current = [];
-      await beginSegment();
+      await recorder.prepareToRecordAsync(fmtRef.current);
+      recorder.record();
       return true;
     } catch {
+      await restorePlayback(); // błąd prepare/record → przywróć tryb odtwarzania (inaczej sesja utyka w „record")
       return false;
     }
   };
 
-  // MUTE/PAUSE → realnie zatrzymaj mikrofon (zakończ segment). RESUME/UNMUTE → nowy segment.
+  // PAUSE → natywna pauza MediaRecorder (ten sam plik). RESUME → record() woła resume() na tym samym pliku.
   const suspend = async () => {
     if (!REAL) return;
-    await endSegment();
+    try { recorder.pause(); } catch {}
   };
   const resumeCapture = async () => {
     if (!REAL) return;
-    try {
-      await beginSegment();
-    } catch {}
+    try { recorder.record(); } catch {}
   };
 
-  // złącz wszystkie segmenty (ADTS AAC) w jeden plik przez konkatenację bajtów
-  const concatSegments = async (uris: string[]): Promise<string | undefined> => {
-    if (uris.length === 0) return undefined;
-    if (uris.length === 1) return uris[0];
-    try {
-      const chunks: Uint8Array[] = [];
-      let total = 0;
-      for (const u of uris) {
-        const bytes = await new File(u).bytes();
-        chunks.push(bytes);
-        total += bytes.length;
-      }
-      const merged = new Uint8Array(total);
-      let off = 0;
-      for (const c of chunks) {
-        merged.set(c, off);
-        off += c.length;
-      }
-      const out = new File(Paths.cache, `rec_${Date.now()}_${total}.aac`);
-      out.create({ overwrite: true });
-      out.write(merged);
-      // posprzątaj segmenty
-      for (const u of uris) {
-        try {
-          new File(u).delete();
-        } catch {}
-      }
-      return out.uri;
-    } catch {
-      return uris[0]; // fallback: przynajmniej pierwszy segment
-    }
-  };
-
-  // kończy nagranie: domyka ostatni segment, skleja wszystkie → {uri, sizeBytes}
+  // kończy nagranie: zatrzymaj recorder → jeden ciągły plik m4a {uri, sizeBytes}
   const stop = async (): Promise<{ uri: string; sizeBytes?: number } | null> => {
     if (!REAL) return null;
-    await endSegment();
-    const uri = await concatSegments(segments.current);
-    segments.current = [];
+    try { await recorder.stop(); } catch {}
+    const uri = recorder.uri ?? undefined;
     await restorePlayback(); // wróć do trybu odtwarzania (PLAY działa po powrocie z czatu)
     if (!uri) return null;
     let sizeBytes: number | undefined;
@@ -145,16 +96,14 @@ export function useAudioCapture() {
     return { uri, sizeBytes };
   };
 
-  // przerwij i skasuj wszystkie segmenty
+  // przerwij i skasuj plik nagrania
   const discard = async (): Promise<void> => {
     if (!REAL) return;
-    await endSegment();
-    for (const u of segments.current) {
-      try {
-        new File(u).delete();
-      } catch {}
+    try { await recorder.stop(); } catch {}
+    const uri = recorder.uri;
+    if (uri) {
+      try { new File(uri).delete(); } catch {}
     }
-    segments.current = [];
     await restorePlayback(); // wróć do trybu odtwarzania (PLAY działa po powrocie z czatu)
   };
 

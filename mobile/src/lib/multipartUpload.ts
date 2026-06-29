@@ -17,11 +17,14 @@ export async function uploadMultipart(opts: {
   fields?: Record<string, string>;
   headers?: Record<string, string>;
 }): Promise<UploadResult> {
+  // mime wg rozszerzenia pliku: m4a (MPEG-4/AAC, teraz) lub aac (ADTS, dawne nagrania)
+  const ext = opts.fileUri.match(/\.[a-z0-9]+$/i)?.[0]?.toLowerCase();
+  const mimeType = ext === '.aac' ? 'audio/aac' : 'audio/mp4';
   const res = await FileSystem.uploadAsync(opts.url, opts.fileUri, {
     httpMethod: 'POST',
     uploadType: FileSystem.FileSystemUploadType.MULTIPART,
     fieldName: opts.fieldName,
-    mimeType: 'audio/aac',
+    mimeType,
     parameters: opts.fields,
     headers: opts.headers,
   });

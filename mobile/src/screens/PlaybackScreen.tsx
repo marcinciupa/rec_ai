@@ -64,23 +64,48 @@ const fmtShort = (sec: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
+// Whisper (przez deAPI) bywa się zapętla (halucynacja): powtarza zdania w obrębie segmentu →
+// zwijamy SĄSIEDNIE identyczne zdania (konserwatywnie; nie rusza dobrych transkryptów).
+function collapseRepeats(text: string): string {
+  const sentences = text.match(/[^.?!…]+[.?!…]*/g);
+  if (!sentences || sentences.length < 2) return text;
+  const norm = (s: string) => s.trim().toLowerCase().replace(/[\s.?!…,]+$/, '');
+  const out: string[] = [];
+  for (const s of sentences) {
+    if (!norm(s)) continue;
+    if (out.length && norm(out[out.length - 1]) === norm(s)) continue;
+    out.push(s.trim());
+  }
+  return out.join(' ');
+}
+
 // deAPI bywa zwraca timestampy INLINE w tekście („[0:00 - 0:46] tekst…") zamiast w polu segments.
-// Gdy segments puste, a tekst ma znaczniki [mm:ss - mm:ss] → parsujemy je na segmenty: kolumna czasu +
-// czysty tekst (jak w projekcie) i włączamy nawigację prev/next. Bez znaczników → bez zmian (fallback).
+// Gdy segments puste, a tekst ma znaczniki [mm:ss - mm:ss] → parsujemy je na segmenty (kolumna czasu +
+// czysty tekst, prev/next). Bez znaczników → fallback. Czyścimy halucynacje Whispera: odrzucamy segmenty
+// z BEZSENSOWNYM czasem (koniec<start albo start „cofa się" względem poprzedniego) — to one niosą duplikaty.
 const TS_INLINE_RE = /\[(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})\]/g;
 function withParsedSegments(t: Transcript | null): Transcript | null {
   if (!t || (t.segments && t.segments.length) || !t.text) return t;
   const text = t.text;
   const matches = [...text.matchAll(TS_INLINE_RE)];
   if (!matches.length) return t;
-  const segs = matches.map((m, i) => {
+  const raw = matches.map((m, i) => {
     const start = Number(m[1]) * 60 + Number(m[2]);
     const end = Number(m[3]) * 60 + Number(m[4]);
     const from = (m.index ?? 0) + m[0].length;
     const to = i + 1 < matches.length ? (matches[i + 1].index ?? text.length) : text.length;
-    return { start, end, text: text.slice(from, to).trim() };
+    return { start, end, text: collapseRepeats(text.slice(from, to).trim()) };
   });
-  return { ...t, segments: segs };
+  const segs: { start: number; end: number; text: string }[] = [];
+  let lastStart = -Infinity;
+  for (const s of raw) {
+    if (s.end < s.start) continue; // koniec przed startem → bezsensowny czas (np. [0:27 - 0:26])
+    if (s.start < lastStart) continue; // czas się cofa → pętla powtórzeń Whispera
+    if (!s.text) continue;
+    segs.push(s);
+    lastStart = s.start;
+  }
+  return { ...t, segments: segs.length ? segs : raw };
 }
 
 // waveform odtwarzania: stałe „nagrane" słupki; zagrana część jasna, reszta wygaszona
@@ -93,7 +118,7 @@ function PlayWaveform({ ratio, dim, samples }: { ratio: number; dim?: boolean; s
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', alignSelf: 'stretch', height: 53 }}>
       {bars.map((h, i) => {
-        const played = !dim && i / bars.length <= ratio;
+        const played = !dim && i / (bars.length - 1) <= ratio;
         return (
           <View key={i} style={{ width: 3, height: 4 + Math.max(0.06, h) * 44, borderRadius: 1.5, backgroundColor: played ? screen.olive.primary : screen.olive.inactive }} />
         );
@@ -170,7 +195,12 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
     : [];
   // indeks bieżącego segmentu (do auto-scrolla); poza zakresem → pierwszy/ostatni
   let curIdx = rows.findIndex((r) => posSec >= r.startN && posSec < r.endN);
-  if (curIdx < 0) curIdx = posSec <= 0 ? 0 : rows.length - 1;
+  if (curIdx < 0) {
+    // pozycja w „dziurze" między segmentami (endN < startN następnego) → NIE skacz na ostatni wiersz
+    // (powodowało skok scrolla na dół i z powrotem); trzymaj ostatni segment, którego start już minęliśmy.
+    curIdx = 0;
+    if (posSec > 0) for (let i = 0; i < rows.length; i++) if (posSec >= rows[i].startN) curIdx = i;
+  }
 
   const pct = hasSegs ? curIdx : Math.round(ratio * 100); // segmenty: scroll na zmianie segmentu; fallback: co ~1%
   useEffect(() => {
@@ -387,6 +417,11 @@ export function usePlaybackScreen({
   const [speed, setSpeed] = useState(1); // 1× / 2×
   const [transcript, setTranscript] = useState<Transcript | null>(null); // treść transkryptu w playerze
   const [scrubDisplay, setScrubDisplay] = useState<number | null>(null); // pozycja w trakcie przewijania (płynny waveform; null = czytaj z odtwarzacza)
+  // pozycja wymuszona skokiem prev/next między segmentami — MA PRIORYTET nad currentTime, dopóki odtwarzacz
+  // do niej nie dojedzie. Bez tego: po seekTo status (currentTime) spóźnia się, więc kolejny prev/next liczy
+  // bieżący segment od STAREJ pozycji i celuje w ten sam → nawigacja „stoi w miejscu". (null = brak wymuszenia)
+  const [navPos, setNavPos] = useState<number | null>(null);
+  const navFromRef = useRef(0); // pozycja sprzed skoku — by zwolnić navPos gdy odtwarzacz DOJEDZIE do celu z właściwej strony
   const lastDeleted = useRef<{ rec: Rec; index: number; name: string } | null>(null);
   const timers = useRef<{ ret?: any }>({});
   // scrub realnego pliku: pauza na czas przewijania, lokalna pozycja, wznowienie po puszczeniu
@@ -446,6 +481,20 @@ export function usePlaybackScreen({
       } catch {}
     }
   };
+  // zwolnij navPos (wymuszenie pozycji z prev/next), gdy odtwarzacz dojedzie do celu — wtedy karaoke wraca
+  // do śledzenia realnego czasu (currentTime / mock pos). Dopóki nie dojedzie, navPos trzyma highlight na celu.
+  useEffect(() => {
+    if (navPos == null) return;
+    const cur = realMode ? pstatus.currentTime || 0 : pos;
+    // „dojechał" = pozycja minęła cel z TEJ strony, z której skakaliśmy (przód: z dołu, tył: z góry).
+    // Dzięki temu nieudany/odjeżdżający seek nie zamraża highlightu (cur i tak przekroczy próg).
+    const reached = navFromRef.current <= navPos ? cur >= navPos - 0.4 : cur <= navPos + 0.4;
+    if (reached) setNavPos(null);
+  }, [pstatus.currentTime, pos, navPos, realMode]);
+
+  // zmiana nagrania / widoku → wyzeruj wymuszenie pozycji (świeży stan, bez resztek po prev/next)
+  useEffect(() => { setNavPos(null); }, [selId, view]);
+
   // pod-widok czatu o notatce (hook zawsze zamontowany; aktywny dopiero w view==='CHAT')
   const chatView = useChatView({ rec: sel, active: view === 'CHAT', mode, mono, quality, language, nameLabel: sel ? `${displayName(sel, recs)} (${fileSize(sel)})` : '', onTypingChange: onTyping, onBack: backFromChat });
 
@@ -529,6 +578,7 @@ export function usePlaybackScreen({
     if (r?.uri) {
       try {
         player.replace({ uri: r.uri });
+        player.setPlaybackRate(1); // replace nie gwarantuje resetu tempa → nowe nagranie nie gra w starym 2×/3×
         player.play();
       } catch {}
     }
@@ -577,7 +627,17 @@ export function usePlaybackScreen({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordingsRequest]);
+  // przerwij efekty scrubu (flaga + ciągła wibracja) — gdy wychodzimy z playera w trakcie przewijania,
+  // onScrubEnd (puszczenie knoba) może nigdy nie nadejść i wibracja zostałaby włączona.
+  const stopScrubFx = () => {
+    scrubbing.current = false;
+    if (continuousOn.current) {
+      hapticContinuous(false);
+      continuousOn.current = false;
+    }
+  };
   const backToList = () => {
+    stopScrubFx();
     if (sel?.uri) {
       try {
         player.pause();
@@ -590,6 +650,7 @@ export function usePlaybackScreen({
 
   // ── transport odtwarzacza ──
   const playerPlayPause = () => {
+    setNavPos(null); // ręczne play/pause zwalnia ewentualne wymuszenie pozycji z prev/next (odmrożenie)
     if (sel?.uri) {
       try {
         pstatus.playing ? player.pause() : player.play();
@@ -643,7 +704,7 @@ export function usePlaybackScreen({
 
   // zatrzymaj realne odtwarzanie (np. przy usuwaniu/wyjściu z odtwarzacza)
   const haltPlayer = () => {
-    scrubbing.current = false;
+    stopScrubFx();
     if (sel?.uri) {
       try {
         player.pause();
@@ -737,7 +798,7 @@ export function usePlaybackScreen({
     const playing = realMode ? pstatus.playing : playerState === 'PLAYING';
     const started = realMode ? pstatus.playing || pstatus.currentTime > 0 : playerState === 'PLAYING' || playerState === 'PAUSED';
     // w trakcie przewijania pokazuj lokalną pozycję scrubu (płynnie), inaczej realną z odtwarzacza
-    const uiPos = scrubDisplay != null ? scrubDisplay : realMode ? pstatus.currentTime : pos;
+    const uiPos = scrubDisplay != null ? scrubDisplay : navPos != null ? navPos : realMode ? pstatus.currentTime : pos;
     const uiLen = realMode ? pstatus.duration || sel?.lengthSec || 0 : len;
     // segmenty transkryptu → prev/next nawiguje po timestampach (zamiast skoku między nagraniami)
     const segList = transcript?.segments ?? [];
@@ -834,6 +895,7 @@ export function usePlaybackScreen({
         continuousOn.current = false;
       }
       setScrubDisplay(null); // wróć do pozycji ze statusu odtwarzacza
+      setNavPos(null); // przewinięcie knobem anuluje wymuszenie pozycji z prev/next
       // decyzja po puszczeniu — rozstrzyga PUNKT STARTU przewijania (nie czy grało):
       //  • koniec → reset na 0, nie graj
       //  • zaczęliśmy na 0 i nadal jesteśmy na 0 (ruch w lewo z początku, donikąd) → zostań na 0, nie graj
@@ -853,10 +915,8 @@ export function usePlaybackScreen({
         }
       } else {
         if (realMode) {
-          try {
-            player.seekTo(scrubPos.current);
-            player.play();
-          } catch {}
+          const np = scrubPos.current;
+          try { Promise.resolve(player.seekTo(np)).then(() => { try { player.play(); } catch {} }).catch(() => {}); } catch {}
         } else {
           setPos(scrubPos.current);
           setPlayerState('PLAYING');
@@ -867,8 +927,10 @@ export function usePlaybackScreen({
     const seekToSec = (sec: number, play = true) => {
       const t = uiLen > 0 ? Math.max(0, Math.min(uiLen, sec)) : Math.max(0, sec);
       setScrubDisplay(null);
+      setNavPos(null); // jawny seek (tap) anuluje wymuszenie pozycji z prev/next
       if (realMode) {
-        try { player.seekTo(t); if (play) player.play(); } catch {}
+        // seekTo jest async — graj DOPIERO po jego zakończeniu, inaczej play() rusza od 0 zanim seek dojdzie
+        try { Promise.resolve(player.seekTo(t)).then(() => { if (play) { try { player.play(); } catch {} } }).catch(() => {}); } catch {}
       } else {
         setPos(t);
         if (play) setPlayerState('PLAYING');
@@ -876,15 +938,28 @@ export function usePlaybackScreen({
     };
     // prev/next między timestampami: bieżący segment = ostatni start ≤ pozycja.
     // next → początek następnego; prev → restart bieżącego (gdy >2 s w środku) lub poprzedni.
+    // Ustawiamy navPos = cel: highlight/scroll skacze OD RAZU, a kolejny prev/next liczy od celu, nie od
+    // spóźnionego currentTime — dzięki temu nawigacja krok-po-kroku działa nawet gdy status się spóźnia/nie gra.
     const gotoSegment = (dir: -1 | 1) => {
       const starts = segList.map((s) => s.start ?? 0);
       if (!starts.length) return;
       let ci = 0;
       for (let i = 0; i < starts.length; i++) if (uiPos >= starts[i] - 0.05) ci = i;
-      const target = dir === 1
+      const raw = dir === 1
         ? starts[Math.min(starts.length - 1, ci + 1)]
         : uiPos - starts[ci] > 2 ? starts[ci] : starts[Math.max(0, ci - 1)];
-      seekToSec(target, true);
+      // clamp do długości audio: sparsowany start segmentu (halucynowany ogon Whispera) bywa > realnej
+      // długości pliku → bez tego currentTime nigdy nie dojedzie i navPos zamroziłby highlight/timer.
+      const target = uiLen > 0 ? Math.max(0, Math.min(uiLen, raw)) : Math.max(0, raw);
+      setScrubDisplay(null);
+      navFromRef.current = uiPos;
+      setNavPos(target);
+      if (realMode) {
+        try { Promise.resolve(player.seekTo(target)).then(() => { try { player.play(); } catch {} }).catch(() => {}); } catch {}
+      } else {
+        setPos(target);
+        setPlayerState('PLAYING');
+      }
     };
     const slider: SliderConfig | undefined = loading
       ? undefined

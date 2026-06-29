@@ -4,6 +4,7 @@ UWAGA: dokładny kształt requestu/odpowiedzi deAPI jest do potwierdzenia żywym
 Publiczne docs: v1 POST /api/v1/client/aud2txt (audio_url, include_ts, model) → request_id +
 request-status/{id} → result_url. STACK.md §18: v2 POST /api/v2/audio/transcriptions (source_file
 multipart, webhook_url+webhook_secret RAZEM). Endpoint/pola są sterowane configiem — łatwo przełączyć."""
+import ipaddress
 import json
 from urllib.parse import urlsplit
 
@@ -12,6 +13,21 @@ import httpx
 
 class DeApiError(Exception):
     pass
+
+
+def _is_internal_host(hostname: str | None) -> bool:
+    """Blokada SSRF: odrzuć localhost / literalne prywatne/loopback/link-local IP (np. 169.254.169.254).
+    Nazwy domenowe przepuszczamy (wyniki idą z presigned CDN deAPI; webhook i tak jest pod HMAC)."""
+    if not hostname:
+        return True
+    h = hostname.lower()
+    if h == "localhost" or h.endswith(".localhost") or h.endswith(".internal"):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        return False  # nazwa domenowa — nie blokujemy
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
 
 
 _ID_KEYS = ("job_request_id", "request_id", "id", "requestId")
@@ -104,7 +120,11 @@ class DeApiClient:
             raise DeApiError(f"submit request failed: {e}")
         if r.status_code >= 400:
             raise DeApiError(f"deAPI {r.status_code}: {r.text[:300]}")
-        request_id = _extract_request_id(json.loads(r.content))
+        try:
+            payload = json.loads(r.content)
+        except ValueError:
+            raise DeApiError(f"deAPI returned non-JSON (2xx): {r.text[:200]}")
+        request_id = _extract_request_id(payload)
         if not request_id:
             raise DeApiError(f"no request_id in deAPI response: {r.text[:200]}")
         return request_id
@@ -115,6 +135,8 @@ class DeApiClient:
         parsed = urlsplit(url)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise DeApiError(f"invalid result_url scheme/host: {url[:80]}")
+        if _is_internal_host(parsed.hostname):
+            raise DeApiError("result_url host not allowed (internal/loopback)")
         # Klucz dołączamy WYŁĄCZNIE gdy host == host deAPI API (dokładnie, nie prefiks → brak wycieku
         # klucza na api.deapi.ai.evil.com). Wyniki idą z presigned results.deapi.ai (bez auth).
         api_host = urlsplit(self.s.deapi_base_url).hostname
@@ -122,5 +144,8 @@ class DeApiClient:
         r = await self._client.get(url, headers=headers)
         r.raise_for_status()
         if "application/json" in r.headers.get("content-type", ""):
-            return json.loads(r.content)  # bytes→UTF-8, nie zgadujemy charsetu
+            try:
+                return json.loads(r.content)  # bytes→UTF-8, nie zgadujemy charsetu
+            except ValueError:
+                raise DeApiError("result_url returned invalid JSON")
         return {"transcript": r.content.decode("utf-8", "replace")}

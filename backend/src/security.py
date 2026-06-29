@@ -26,10 +26,11 @@ def verify_deapi_signature(
         return False, "invalid timestamp"
     if abs(time.time() - ts) > tolerance_s:
         return False, "timestamp outside tolerance window"
-    provided = signature_header.split("=", 1)[-1].strip()
+    # hex jest case-insensitive → normalizujemy do małych liter (inaczej deAPI z wielkimi literami = cichy outage)
+    provided = signature_header.split("=", 1)[-1].strip().lower()
     # Podpisujemy surowe bajty body (bez ponownego kodowania, które mogłoby zmienić zawartość).
     signed_payload = timestamp_header.encode() + b"." + raw_body
-    expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+    expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()  # już lowercase
     try:
         # porównanie na bajtach ASCII; nie-ASCII w nagłówku = po prostu brak dopasowania (bez wyjątku)
         provided_b = provided.encode("ascii")

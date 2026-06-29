@@ -7,6 +7,9 @@ import { getDeviceId } from './deviceId';
 import { uploadMultipart } from './multipartUpload';
 
 const BASE = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/+$/, '');
+// Sekret app↔backend (nagłówek X-App-Key) — backend wymaga go w produkcji. Gdy nieustawiony (dev), pomijamy.
+const APP_KEY = process.env.EXPO_PUBLIC_APP_KEY;
+const appKeyHeader: Record<string, string> = APP_KEY ? { 'X-App-Key': APP_KEY } : {};
 
 export class ApiError extends Error {
   status: number;
@@ -35,19 +38,35 @@ export type ChatResult = { answer: string; model: string; usage?: Record<string,
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** fetch z retry: ponawia tylko błędy sieci i 5xx (4xx zwraca od razu). Wykładniczy backoff. */
-async function request(path: string, makeInit: () => RequestInit, retries = 2, baseDelay = 600): Promise<Response> {
+// limit czasu na operację — przeciwko ZAWIESZONEMU (nie zerwanemu) połączeniu, które inaczej trzymałoby
+// await w nieskończoność = wieczny spinner. Po timeoucie rzuca ApiError(0) → ścieżka „failed".
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new ApiError(0, `timeout: ${label} (${ms}ms)`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
+/** fetch z retry: ponawia tylko błędy sieci i 5xx (4xx zwraca od razu). Wykładniczy backoff. Per próba timeout. */
+async function request(path: string, makeInit: () => RequestInit, retries = 2, baseDelay = 600, timeoutMs = 30000): Promise<Response> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(`${BASE}${path}`, makeInit());
+      const res = await fetch(`${BASE}${path}`, { ...makeInit(), signal: ctrl.signal });
+      clearTimeout(t);
       if (res.status >= 500 && attempt < retries) {
         await sleep(baseDelay * 2 ** attempt);
         continue;
       }
       return res;
     } catch (e) {
-      lastErr = e;
+      clearTimeout(t);
+      lastErr = e; // też AbortError przy timeoucie → ponawiamy (chyba że to ostatnia próba)
       if (attempt < retries) await sleep(baseDelay * 2 ** attempt);
     }
   }
@@ -76,14 +95,19 @@ export async function transcribe(opts: {
   const url = `${BASE}/api/v1/transcriptions`;
   const fields: Record<string, string> = { recording_id: opts.recordingId };
   if (opts.language) fields.language = opts.language;
-  const headers = { 'X-Device-Id': deviceId, Accept: 'application/json' };
+  const headers = { 'X-Device-Id': deviceId, Accept: 'application/json', ...appKeyHeader };
 
   // Upload natywnym uploaderem (expo/fetch + File-Blob); legacy {uri,name,type} nie działa na New Arch.
   // Retry tylko dla błędów sieci i 5xx (4xx zwracamy od razu). Świeży FormData budowany w uploaderze co próbę.
   let lastErr: unknown;
   for (let attempt = 0; attempt <= 2; attempt++) {
     try {
-      const { status, text } = await uploadMultipart({ url, fileUri: opts.uri, fieldName: 'audio', fields, headers });
+      // 120 s na upload (pliki audio bywają duże/wolne); timeout → ApiError(0), nie zawieszamy spinnera
+      const { status, text } = await withTimeout(
+        uploadMultipart({ url, fileUri: opts.uri, fieldName: 'audio', fields, headers }),
+        120000,
+        'upload'
+      );
       if (status >= 500 && attempt < 2) {
         await sleep(600 * 2 ** attempt);
         continue;
@@ -111,7 +135,7 @@ export async function chat(opts: { transcript: string; question: string; message
   const deviceId = await getDeviceId();
   const res = await request('/api/v1/chat', () => ({
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Device-Id': deviceId, Accept: 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Device-Id': deviceId, Accept: 'application/json', ...appKeyHeader },
     body: JSON.stringify({ transcript: opts.transcript, question: opts.question, messages: opts.messages ?? [], language: opts.language }),
   }));
   if (!res.ok) throw new ApiError(res.status, await parseError(res));

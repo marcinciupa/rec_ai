@@ -14,6 +14,8 @@ import type { Rec } from '../hooks/useRecordings';
 import { genericName, nextSeq } from '../hooks/useRecordings';
 import { deriveAiStatus, type TranscriptionStore } from '../hooks/useTranscription';
 import { persistRecording } from '../lib/recordingFiles';
+import { uuidv4 } from '../lib/uuid';
+import { hapticRecordStart, hapticRecordStop } from '../lib/haptics';
 
 // redukcja obwiedni do N słupków (peak w każdym przedziale)
 const downsample = (arr: number[], n: number): number[] => {
@@ -170,12 +172,21 @@ export function useRecordingScreen({
     return () => clearInterval(id);
   }, [state]);
 
-  // sprzątanie timerów przy odmontowaniu
+  // referencje do najświeższego stanu/capture dla cleanupu odmontowania (efekt [] nie widzi aktualnych)
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const captureRef = useRef(capture);
+  captureRef.current = capture;
+  // sprzątanie przy odmontowaniu: timery + jeśli wciąż nagrywamy/pauza → przerwij recorder (zwolnij mikrofon
+  // i sesję audio, skasuj plik tymczasowy) — inaczej MediaRecorder zostaje aktywny po wyjściu z ekranu
   useEffect(
     () => () => {
       const t = timers.current;
       clearTimeout(t.ret);
       clearTimeout(t.abort);
+      if (stateRef.current === 'RECORDING' || stateRef.current === 'PAUSED') {
+        captureRef.current.discard().catch(() => {});
+      }
     },
     []
   );
@@ -194,14 +205,27 @@ export function useRecordingScreen({
     onOpenPlayer?.(lastSavedId);
   };
 
-  const start = () => {
+  // baner sygnalizujący że nagranie się NIE rozpoczęło (brak uprawnień / błąd recordera)
+  const flashAborted = () => {
+    setAbortedFlash(true);
+    clearTimeout(timers.current.abort);
+    timers.current.abort = setTimeout(() => setAbortedFlash(false), 3000);
+  };
+  const start = async () => {
     clearTimeout(timers.current.ret); // przerwij auto-powrót do ready
     setAbortedFlash(false);
     setElapsed(0);
     samplesRef.current = []; // nowa obwiednia
     setState('RECORDING');
-    // RECORD MODE → stereo/mono, COMPRESSION → jakość (bitrate); web → no-op (mock)
-    capture.start({ stereo: !mono, quality });
+    hapticRecordStart(); // dłuższy buzz „zaczęło się"
+    // RECORD MODE → stereo/mono, QUALITY → jakość (bitrate); web → no-op (mock, real=false)
+    const ok = await capture.start({ stereo: !mono, quality });
+    // natywnie: false = odmowa mikrofonu / błąd prepare → NIE udawaj nagrywania (inaczej zapis pustego pliku)
+    if (capture.real && !ok) {
+      setState('READY');
+      setElapsed(0);
+      flashAborted();
+    }
   };
   // PAUSE: zamraża timer i REALNIE zatrzymuje mikrofon (suspend = koniec segmentu; resume = nowy segment).
   const pause = () => {
@@ -225,8 +249,15 @@ export function useRecordingScreen({
   // zapisz nagranie do wspólnego store (realny plik z uri, albo mock bez uri na web)
   const saveRecording = async (lengthSec: number) => {
     const captured = await capture.stop();
-    const id = `rec_${Date.now()}`;
-    // przenieś nagrany plik z cache do TRWAŁEGO katalogu (documentDirectory/recordings/<id>.aac);
+    // natywnie: brak uri = stop nie zwrócił pliku (błąd recordera) → nie zapisuj pustego, niegrywalnego wpisu
+    if (capture.real && !captured?.uri) {
+      setState('READY');
+      setElapsed(0);
+      flashAborted();
+      return;
+    }
+    const id = `rec_${uuidv4()}`; // unikalne (Date.now() kolidował przy 2 zapisach w tej samej ms → nadpisanie)
+    // przenieś nagrany plik z cache do TRWAŁEGO katalogu (documentDirectory/recordings/<id>.<ext>);
     // bez tego OS może skasować cache i nagranie przepada po restarcie
     let uri = captured?.uri;
     let sizeBytes = captured?.sizeBytes;
@@ -254,6 +285,7 @@ export function useRecordingScreen({
   };
   const stop = () => {
     setAbortedFlash(false);
+    hapticRecordStop(); // podwójny buzz „koniec nagrania"
     setState('SAVED');
     saveRecording(elapsed); // async: zapis pliku + (gdy AUTO TRANSCRIBE) realna transkrypcja przez manager
     // „STOPPED AND SAVED" przez 3 s, potem auto-powrót do ready (chyba że odpalisz podgląd PLAY)

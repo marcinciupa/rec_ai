@@ -2,7 +2,7 @@
   "expo": {
     "name": "REC_AI",
     "slug": "rec-ai",
-    "version": "0.9635",
+    "version": "0.966",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.glue010.recai",
-      "versionCode": 9635,
+      "versionCode": 9660,
       "blockedPermissions": ["android.permission.ACTIVITY_RECOGNITION"],
       "adaptiveIcon": {
         "backgroundColor": "#FF3636",

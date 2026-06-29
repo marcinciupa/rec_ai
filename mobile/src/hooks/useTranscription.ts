@@ -188,6 +188,9 @@ export function useTranscription(store: RecordingsStore) {
             jobId: res.job_id,
           }).catch(() => {});
           setOne(rec.id, { status: 'processing', pct: statesRef.current[rec.id]?.pct ?? 90 });
+          // NIE zostawiaj spinnera wiszącego na 90% w nieskończoność — zwolnij UI po chwili; wiersz DB
+          // pozostaje 'processing', więc transkrypcja wznowi się przy następnym starcie apki.
+          finishLater(rec.id, 2000);
         } else {
           db.saveTranscript({
             recordingId: rec.id,
