@@ -172,7 +172,7 @@ const INITIAL_SECTIONS: SectionData[] = [
   {
     header: 'PLAYBACK',
     items: [
-      { label: 'AUTO TRANSCRIBE', options: ['OFF', 'ON'], value: 1 },
+      { label: 'TRANSCRIPTION', options: ['AUTO', 'MANUAL'], value: 0 },
       // język pytań i odpowiedzi AI (czat). Domyślnie ENGLISH.
       { label: 'AI LANGUAGE', options: ['ENGLISH', 'POLISH'], value: 0 },
       { label: 'PLAYBACK TIMER', options: ['ELAPSED', 'REMAINING'], value: 0 },
@@ -434,8 +434,8 @@ export function useSettingsScreen({
   const motion = motionItem ? motionItem.options[motionItem.value] === 'ON' : false;
   const hItem = flat.find((it) => it.label === 'HANDED');
   const leftHanded = hItem ? hItem.options[hItem.value] === 'LEFT' : false;
-  const atItem = flat.find((it) => it.label === 'AUTO TRANSCRIBE');
-  const autoTranscribe = atItem ? atItem.options[atItem.value] === 'ON' : false;
+  const atItem = flat.find((it) => it.label === 'TRANSCRIPTION');
+  const autoTranscribe = atItem ? atItem.options[atItem.value] === 'AUTO' : false;
   const rmItem = flat.find((it) => it.label === 'RECORD MODE');
   const recordMono = rmItem ? rmItem.options[rmItem.value] === 'MONO' : false;
   const compItem = flat.find((it) => it.label === 'COMPRESSION');
