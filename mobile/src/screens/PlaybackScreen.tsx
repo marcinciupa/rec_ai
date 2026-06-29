@@ -701,7 +701,7 @@ export function usePlaybackScreen({
               ? { label: 'TRANS-\nCRIBE', onPress: transcribe }
               : { label: '' },
           // gra → prędkość odtwarzania z pierścieniem biegu (1×/1.5×/2×/3×); pauza/stop → wolny slot (BACK jest na metalu)
-          playing ? { label: `${speed}X\nSPEED`, onPress: cycleSpeed, progress: speedFill(speed) } : { label: '' },
+          playing ? { label: `${speed}X\nSPEED`, supporting: '[CYCLE]', onPress: cycleSpeed, progress: speedFill(speed) } : { label: '' },
         ],
         metal: [
           // gra/pauza → STOP (stop+seek0); zatrzymany → BACK (do listy)

@@ -14,7 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceShell } from './src/components/chrome/DeviceShell';
 import { KeyboardConfig } from './src/components/chrome/Keyboard';
 import { useSettingsScreen } from './src/screens/SettingsScreen';
-import { WelcomeDialog } from './src/screens/WelcomeDialog';
+import { useWelcomeDialog } from './src/screens/WelcomeDialog';
 import { useRecordingScreen } from './src/screens/RecordingScreen';
 import { usePlaybackScreen } from './src/screens/PlaybackScreen';
 import { useRecordings } from './src/hooks/useRecordings';
@@ -166,18 +166,11 @@ export default function App() {
     mode === 'RECORDING'
       ? handed
       : { ...handed, metal: handed.metal.map((k) => (k.type === 'record' && !k.onPress ? { ...k, onPress: () => setMode('RECORDING') } : k)) };
-  const slider = mode === 'SETTINGS' ? settings.slider : mode === 'PLAYBACK' ? playback.slider : undefined;
-  // onboarding: klawiatura ograniczona do CONFIRM (środkowy klawisz, wariant fosforowy = primary); reszta wyłączona,
-  // by nie wchodzić w interakcję z ekranem pod spodem. CONFIRM zamyka onboarding (finishWelcome).
-  const welcomeKeyboard: KeyboardConfig = {
-    screen: [{ label: '' }, { label: 'CONFIRM', variant: 'primary', onPress: finishWelcome }, { label: '' }],
-    metal: [
-      { type: 'label', upper: 'STOP', lower: 'BACK', active: false },
-      { type: 'record' },
-      { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
-    ],
-  };
-  const finalKeyboard = showWelcome ? welcomeKeyboard : keyboard;
+  const baseSlider = mode === 'SETTINGS' ? settings.slider : mode === 'PLAYBACK' ? playback.slider : undefined;
+  // onboarding: własna nawigacja jak w Settings (CHANGE/CONFIRM/NEXT + slider) — z hooka welcome
+  const welcome = useWelcomeDialog({ optionOf: settings.optionOf, optionsOf: settings.optionsOf, cycleByLabel: settings.cycleByLabel, onFinish: finishWelcome });
+  const finalKeyboard = showWelcome ? welcome.keyboard : keyboard;
+  const slider = showWelcome ? welcome.slider : baseSlider;
 
   // schowaj splash dopiero gdy fonty gotowe (płynne przejście, bez białego błysku)
   useEffect(() => {
@@ -226,7 +219,7 @@ export default function App() {
         >
           {content}
           {/* onboarding mieści się W EKRANIE urządzenia (slot Display), jak inne dialogi */}
-          {showWelcome ? <WelcomeDialog optionOf={settings.optionOf} cycleByLabel={settings.cycleByLabel} /> : null}
+          {showWelcome ? welcome.overlay : null}
         </DeviceShell>
       </View>
 

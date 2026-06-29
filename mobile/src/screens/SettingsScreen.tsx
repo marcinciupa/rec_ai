@@ -287,6 +287,7 @@ export function useSettingsScreen({
   const closeInfo = () => setInfoOpen(false);
   // Settery „po etykiecie" — używane przez welcome screen (te same ustawienia, podgląd na żywo).
   const optionOf = (label: string) => { const it = flatItems.find((i) => i.label === label); return it ? it.options[it.value] : ''; };
+  const optionsOf = (label: string) => { const it = flatItems.find((i) => i.label === label); return it ? it.options : []; };
   const cycleByLabel = (label: string) =>
     setSections((prev) =>
       prev.map((sec) => ({
@@ -345,8 +346,9 @@ export function useSettingsScreen({
       : selItem.options.length === 2 && selItem.options.includes('OFF') && selItem.options.includes('ON')
         ? (selItem.options[selItem.value] === 'ON' ? 'TURN OFF' : 'TURN ON')
         : keyWrap(nextOpt);
-  // supporting [HINT] na kluczu #1 = hint opcji, NA KTÓRĄ przełączymy (np. COMPRESSION HIGH→LOW pokaże [SMALL])
-  const key1Supporting = selItem && !selItem.action ? selItem.hints?.[nextIdx] : undefined;
+  // supporting na kluczu #1: hint opcji docelowej (np. COMPRESSION → [SMALL]) ma pierwszeństwo;
+  // inaczej [CYCLE] jako default gdy >2 opcje (np. THEME); 2-opcyjne bez hintu → bez supportu.
+  const key1Supporting = selItem && !selItem.action ? (selItem.hints?.[nextIdx] ?? (selItem.options.length > 2 ? '[CYCLE]' : undefined)) : undefined;
 
   const keyboard: KeyboardConfig = infoOpen
     ? {
@@ -452,5 +454,5 @@ export function useSettingsScreen({
   const ksoItem = flat.find((it) => it.label === 'KEEP SCREEN ON');
   const keepScreenOn = ksoItem ? ksoItem.options[ksoItem.value] === 'ON' : false;
 
-  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, recordQuality, language, showTimeLeft, keepScreenOn, optionOf, cycleByLabel };
+  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, recordQuality, language, showTimeLeft, keepScreenOn, optionOf, optionsOf, cycleByLabel };
 }
