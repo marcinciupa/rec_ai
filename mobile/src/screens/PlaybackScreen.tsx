@@ -237,7 +237,7 @@ function RowOption({ label, active, risk, onPress }: { label: string; active: bo
     <Pressable onPress={onPress} hitSlop={6}>
       {({ pressed }) =>
         active ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: 2, paddingRight: 4, paddingVertical: 2, borderRadius: 3, backgroundColor: color.dark21, opacity: pressed ? 0.6 : 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingTop: 2, paddingBottom: 2, paddingLeft: 4, paddingRight: 8, borderRadius: 2, backgroundColor: color.dark21, opacity: pressed ? 0.6 : 1 }}>
             <Text style={{ ...txt, color: activeColor, ...activeGlow }}>•</Text>
             <Text style={{ ...txt, color: activeColor, ...activeGlow }}>{label}</Text>
           </View>
@@ -355,6 +355,7 @@ export function usePlaybackScreen({
   pendingPlayId,
   onConsumePending,
   recordingsRequest = 0,
+  onToggleTimer,
 }: {
   store: RecordingsStore;
   mono?: boolean;
@@ -371,6 +372,7 @@ export function usePlaybackScreen({
   pendingPlayId?: string | null;
   onConsumePending?: () => void;
   recordingsRequest?: number; // licznik z klawisza RECORDINGS → reset widoku na LIST
+  onToggleTimer?: () => void; // tap timera w playerze → przełącz ELAPSED/REMAINING (PLAYBACK TIMER w Settings)
 }) {
   const { recordings: recs, removeById, insertAt } = store;
   const [rawSel, setSelId] = useState<string>('');
@@ -924,7 +926,10 @@ export function usePlaybackScreen({
               <>
                 <View style={{ alignSelf: 'stretch' }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                    <Text style={{ fontFamily: font.timer.family, fontSize: 24, color: screen.olive.primary, ...glow('rgba(226,255,228,0.25)') }}>{showTimeLeft ? `-${fmt(Math.max(0, uiLen - uiPos))}` : fmt(uiPos)}</Text>
+                    {/* tap timera → przełącz ELAPSED/REMAINING (odzwierciedlone w Settings przez onToggleTimer) */}
+                    <Pressable onPress={onToggleTimer} hitSlop={8}>
+                      <Text style={{ fontFamily: font.timer.family, fontSize: 24, color: screen.olive.primary, ...glow('rgba(226,255,228,0.25)') }}>{showTimeLeft ? `-${fmt(Math.max(0, uiLen - uiPos))}` : fmt(uiPos)}</Text>
+                    </Pressable>
                     <Text style={{ fontFamily: font.timer.family, fontSize: 20, color: screen.olive.inactive }}>{fmt(uiLen)}</Text>
                   </View>
                   <View style={{ alignSelf: 'stretch', height: 2, borderRadius: 2, backgroundColor: screen.olive.primary, boxShadow: '0px 0px 4px 0px rgba(226,255,228,0.25)', marginTop: 8 } as any} />

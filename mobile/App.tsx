@@ -107,6 +107,7 @@ export default function App() {
     pendingPlayId: pendingPlay,
     onConsumePending: () => setPendingPlay(null),
     recordingsRequest: recordingsReq,
+    onToggleTimer: () => settings.cycleByLabel('PLAYBACK TIMER'), // tap timera w playerze ↔ ELAPSED/REMAINING (Settings)
   });
   // tryb pisania w czacie wymusza fullscreen + schowaną dolną obudowę; po wyjściu wraca do ustawienia użytkownika
   const variant = settings.fullscreen || chatTyping ? 'fullscreen' : 'device';
