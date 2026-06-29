@@ -32,7 +32,7 @@ const phosphorGlow = {
 
 // długie pojedyncze słowa na labelach klawiszy → ręczny podział na 2 linie z dywizem
 // (jak RECORD-\nINGS / TRANS-\nCRIBE). Patrz memory feedback_key_label_wrap.
-const KEY_WRAP: Record<string, string> = { REMAINING: 'REMAIN-\nING' };
+const KEY_WRAP: Record<string, string> = { REMAINING: 'REMAIN-\nING', FULLSCREEN: 'FULL-\nSCREEN' };
 const keyWrap = (s: string) => KEY_WRAP[s] ?? s;
 
 /** Nagłówek sekcji (RECORDING / PLAYBACK / OTHER) — wyśrodkowany, phosphor. */
@@ -153,7 +153,8 @@ const STEREO_CAPABLE = true;
 
 /** Element ustawienia: etykieta + lista wartości + indeks bieżącej. `locked` = nie do zmiany (wartość wygaszona).
  *  `action` = wiersz-akcja (np. INFO): CHANGE/tap/knob nie cyklują wartości, tylko odpalają nakładkę. */
-type Item = { label: string; options: string[]; value: number; locked?: boolean; action?: boolean };
+// hints = opcjonalny supporting label per opcja (np. COMPRESSION HIGH→[BIG]), pokazywany na kontekstowym klawiszu #1
+type Item = { label: string; options: string[]; value: number; locked?: boolean; action?: boolean; hints?: string[] };
 type SectionData = { header: string; items: Item[] };
 
 /** Stan początkowy (wartości jak w Figmie). Większość to przełącznik OFF/ON. */
@@ -162,9 +163,10 @@ const INITIAL_SECTIONS: SectionData[] = [
     header: 'RECORDING',
     items: [
       { label: 'KEEP SCREEN ON', options: ['OFF', 'ON'], value: 1 },
-      // brak stereo → MONO wymuszony ON i zablokowany
-      { label: 'RECORD MONO', options: ['OFF', 'ON'], value: STEREO_CAPABLE ? 0 : 1, locked: !STEREO_CAPABLE },
-      { label: 'SAVE UNCOMPRESSED\n(VERY LARGE FILES)', options: ['OFF', 'ON'], value: 0 },
+      // brak stereo → MONO wymuszony i zablokowany
+      { label: 'RECORD MODE', options: ['STEREO', 'MONO'], value: STEREO_CAPABLE ? 0 : 1, locked: !STEREO_CAPABLE },
+      // jakość AAC (bitrate). HIGH = większy plik [BIG], LOW = mniejszy [SMALL].
+      { label: 'COMPRESSION', options: ['HIGH', 'LOW'], hints: ['[BIG]', '[SMALL]'], value: 0 },
     ],
   },
   {
@@ -180,9 +182,9 @@ const INITIAL_SECTIONS: SectionData[] = [
     header: 'OTHER',
     items: [
       { label: 'THEME', options: ['LIGHT', 'DARK', 'ORANGE', 'NAVY'], value: 0 },
-      { label: 'FULLSCREEN', options: ['OFF', 'ON'], value: 0 },
+      { label: 'VIEW', options: ['DEVICE', 'FULLSCREEN'], value: 0 },
       { label: 'MOTION', options: ['OFF', 'ON'], value: 1 },
-      { label: 'LEFT-HANDED MODE', options: ['OFF', 'ON'], value: 0 },
+      { label: 'HANDED', options: ['RIGHT', 'LEFT'], value: 0 },
       // wiersz-akcja: otwiera dialog z informacjami o aplikacji (wersja, AI itp.)
       { label: 'INFO', options: ['VIEW'], value: 0, action: true },
     ],
@@ -312,7 +314,7 @@ export function useSettingsScreen({
     setSections((prev) =>
       prev.map((sec) => ({
         ...sec,
-        items: sec.items.map((it) => (it.label === 'FULLSCREEN' ? { ...it, value: on ? 1 : 0 } : it)),
+        items: sec.items.map((it) => (it.label === 'VIEW' ? { ...it, value: on ? 1 : 0 } : it)),
       }))
     );
   // Tap w wiersz → zaznacz i przełącz wartość (a dla wiersza-akcji: odpal nakładkę).
@@ -329,7 +331,8 @@ export function useSettingsScreen({
   //  • wielo-opcja (PLAYBACK TIMER, THEME, AI LANGUAGE) → następna wartość, np. ELAPSED → REMAIN-ING
   // Akcja klawisza ta sama (changeBy → następna opcja), zmienia się tylko etykieta.
   const selItem = flatItems[selected];
-  const nextOpt = selItem ? selItem.options[(selItem.value + 1) % selItem.options.length] : '';
+  const nextIdx = selItem ? (selItem.value + 1) % selItem.options.length : 0;
+  const nextOpt = selItem ? selItem.options[nextIdx] : '';
   const key1Label = !selItem
     ? 'CHANGE'
     : selItem.action
@@ -337,6 +340,8 @@ export function useSettingsScreen({
       : selItem.options.length === 2 && selItem.options.includes('OFF') && selItem.options.includes('ON')
         ? (selItem.options[selItem.value] === 'ON' ? 'TURN OFF' : 'TURN ON')
         : keyWrap(nextOpt);
+  // supporting [HINT] na kluczu #1 = hint opcji, NA KTÓRĄ przełączymy (np. COMPRESSION HIGH→LOW pokaże [SMALL])
+  const key1Supporting = selItem && !selItem.action ? selItem.hints?.[nextIdx] : undefined;
 
   const keyboard: KeyboardConfig = infoOpen
     ? {
@@ -346,7 +351,7 @@ export function useSettingsScreen({
       }
     : {
         screen: [
-          { label: key1Label, variant: 'primary', onPress: () => changeBy(1) },
+          { label: key1Label, supporting: key1Supporting, variant: 'primary', onPress: () => changeBy(1) },
           { label: '' },
           { label: 'NEXT', supporting: '[CYCLE]', onPress: () => move(1) },
         ],
@@ -421,18 +426,20 @@ export function useSettingsScreen({
 
   // Bieżące wartości sterujące obudową: FULLSCREEN (wariant) i THEME (motyw koloru).
   const flat = sections.flatMap((s) => s.items);
-  const fullscreenItem = flat.find((it) => it.label === 'FULLSCREEN');
-  const fullscreen = fullscreenItem ? fullscreenItem.options[fullscreenItem.value] === 'ON' : false;
+  const viewItem = flat.find((it) => it.label === 'VIEW');
+  const fullscreen = viewItem ? viewItem.options[viewItem.value] === 'FULLSCREEN' : false;
   const themeItem = flat.find((it) => it.label === 'THEME');
   const theme = (themeItem ? themeItem.options[themeItem.value] : 'LIGHT') as ThemeName;
   const motionItem = flat.find((it) => it.label === 'MOTION');
   const motion = motionItem ? motionItem.options[motionItem.value] === 'ON' : false;
-  const lhItem = flat.find((it) => it.label === 'LEFT-HANDED MODE');
-  const leftHanded = lhItem ? lhItem.options[lhItem.value] === 'ON' : false;
+  const hItem = flat.find((it) => it.label === 'HANDED');
+  const leftHanded = hItem ? hItem.options[hItem.value] === 'LEFT' : false;
   const atItem = flat.find((it) => it.label === 'AUTO TRANSCRIBE');
   const autoTranscribe = atItem ? atItem.options[atItem.value] === 'ON' : false;
-  const rmItem = flat.find((it) => it.label === 'RECORD MONO');
-  const recordMono = rmItem ? rmItem.options[rmItem.value] === 'ON' : false;
+  const rmItem = flat.find((it) => it.label === 'RECORD MODE');
+  const recordMono = rmItem ? rmItem.options[rmItem.value] === 'MONO' : false;
+  const compItem = flat.find((it) => it.label === 'COMPRESSION');
+  const recordQuality = (compItem ? compItem.options[compItem.value] : 'HIGH') as 'HIGH' | 'LOW';
   const langItem = flat.find((it) => it.label === 'AI LANGUAGE');
   const language = (langItem ? langItem.options[langItem.value] : 'ENGLISH') === 'POLISH' ? 'pl' : 'en';
   const ptItem = flat.find((it) => it.label === 'PLAYBACK TIMER');
@@ -440,5 +447,5 @@ export function useSettingsScreen({
   const ksoItem = flat.find((it) => it.label === 'KEEP SCREEN ON');
   const keepScreenOn = ksoItem ? ksoItem.options[ksoItem.value] === 'ON' : false;
 
-  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, language, showTimeLeft, keepScreenOn, optionOf, cycleByLabel };
+  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, recordQuality, language, showTimeLeft, keepScreenOn, optionOf, cycleByLabel };
 }

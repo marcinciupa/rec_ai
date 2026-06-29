@@ -76,6 +76,7 @@ export default function App() {
   const recording = useRecordingScreen({
     aiEnabled: settings.autoTranscribe,
     mono: settings.recordMono,
+    quality: settings.recordQuality,
     mode,
     onCycleMode: cycleMode,
     onOpenSettings: () => setMode('SETTINGS'),

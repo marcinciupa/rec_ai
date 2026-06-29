@@ -9,7 +9,6 @@ import { View, Text } from 'react-native';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
-import { useBlink } from '../theme/BlinkContext';
 import { useAudioCapture } from '../hooks/useAudioCapture';
 import type { Rec } from '../hooks/useRecordings';
 import { genericName, nextSeq } from '../hooks/useRecordings';
@@ -37,7 +36,7 @@ const today = () => {
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`;
 };
 
-type RecState = 'READY' | 'RECORDING' | 'MUTED' | 'PAUSED' | 'SAVED';
+type RecState = 'READY' | 'RECORDING' | 'PAUSED' | 'SAVED';
 
 const fmt = (s: number) => {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -101,19 +100,6 @@ function Banner({ text, tone }: { text: string; tone: 'red' | 'phosphor' }) {
   );
 }
 
-/** Baner MUTED (czerwony) migający nad wygaszonym waveformem. */
-function MutedBanner() {
-  const on = useBlink();
-  return (
-    <View
-      pointerEvents="none"
-      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, justifyContent: 'center', opacity: on ? 1 : 0 }}
-    >
-      <Banner text="MUTED" tone="red" />
-    </View>
-  );
-}
-
 /** Baner PAUSED (czerwony, statyczny) nad zamrożonym waveformem. */
 function PausedBanner() {
   return (
@@ -129,6 +115,7 @@ function PausedBanner() {
 export function useRecordingScreen({
   aiEnabled,
   mono = false,
+  quality = 'HIGH',
   mode = 'RECORDING',
   onCycleMode,
   onOpenSettings,
@@ -140,6 +127,7 @@ export function useRecordingScreen({
 }: {
   aiEnabled: boolean;
   mono?: boolean;
+  quality?: 'HIGH' | 'LOW'; // COMPRESSION → bitrate nagrywania (HIGH [BIG] / LOW [SMALL])
   mode?: Mode;
   onCycleMode?: () => void;
   onOpenSettings?: () => void;
@@ -167,18 +155,17 @@ export function useRecordingScreen({
   levelRef.current = capture.level;
   const samplesRef = useRef<number[]>([]);
   useEffect(() => {
-    if (state !== 'RECORDING' && state !== 'MUTED') return; // PAUSED zamraża zbieranie
+    if (state !== 'RECORDING') return; // PAUSED zamraża zbieranie
     const id = setInterval(() => {
-      // MUTED = mikrofon zatrzymany (cisza) → 0; inaczej realny poziom (lub mock na web)
-      const v = state === 'MUTED' ? 0 : levelRef.current != null ? levelRef.current : Math.random();
+      const v = levelRef.current != null ? levelRef.current : Math.random(); // realny poziom (lub mock na web)
       samplesRef.current.push(v);
     }, 150);
     return () => clearInterval(id);
   }, [state]);
 
-  // timer leci podczas nagrywania (też w mute)
+  // timer leci podczas nagrywania (PAUSE zamraża)
   useEffect(() => {
-    if (state !== 'RECORDING' && state !== 'MUTED') return;
+    if (state !== 'RECORDING') return;
     const id = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(id);
   }, [state]);
@@ -213,15 +200,12 @@ export function useRecordingScreen({
     setElapsed(0);
     samplesRef.current = []; // nowa obwiednia
     setState('RECORDING');
-    capture.start(); // realne nagrywanie (natywnie; web → no-op, mock)
+    // RECORD MODE → stereo/mono, COMPRESSION → jakość (bitrate); web → no-op (mock)
+    capture.start({ stereo: !mono, quality });
   };
-  // PAUSE: zamraża timer; MUTE: timer leci. Oba REALNIE zatrzymują mikrofon (suspend = koniec segmentu).
+  // PAUSE: zamraża timer i REALNIE zatrzymuje mikrofon (suspend = koniec segmentu; resume = nowy segment).
   const pause = () => {
     setState('PAUSED');
-    capture.suspend();
-  };
-  const mute = () => {
-    setState('MUTED');
     capture.suspend();
   };
   const resume = () => {
@@ -304,19 +288,14 @@ export function useRecordingScreen({
     };
   } else if (state === 'RECORDING') {
     keyboard = {
-      // MUTE: wycisza (zatrzymuje mikrofon), timer leci. ⏺ pauzuje (timer zamrożony).
-      screen: [abortKey, { label: '' }, { label: 'MUTE', variant: 'risk', onPress: mute }],
-      metal: [stopActive, { type: 'record', onPress: pause }, playInactive],
-    };
-  } else if (state === 'MUTED') {
-    keyboard = {
-      screen: [abortKey, { label: '' }, { label: 'UNMUTE', variant: 'highRisk', onPress: resume }],
+      // ⏺ pauzuje (timer zamrożony, mikrofon zatrzymany). Środkowy klawisz pusty (MUTE usunięty).
+      screen: [abortKey, { label: '' }, { label: '' }],
       metal: [stopActive, { type: 'record', onPress: pause }, playInactive],
     };
   } else if (state === 'PAUSED') {
     keyboard = {
-      // ⏺ wznawia; MUTE z pauzy → MUTED (mikrofon i tak zatrzymany, zmienia się tylko timer/banner)
-      screen: [abortKey, { label: '' }, { label: 'MUTE', variant: 'risk', onPress: () => setState('MUTED') }],
+      // ⏺ wznawia nagrywanie (nowy segment).
+      screen: [abortKey, { label: '' }, { label: '' }],
       metal: [stopActive, { type: 'record', onPress: resume }, playInactive],
     };
   } else {
@@ -332,14 +311,14 @@ export function useRecordingScreen({
   const ai = deriveAiStatus({ tState: transcription?.stateOf(lastSavedId), aiArmed: aiEnabled });
 
   // waveform: recording = animowany, pełna czerwień; muted = animowany 0 (cisza); ready/paused = kropki
-  const waveActive = state === 'RECORDING' || state === 'MUTED';
+  const waveActive = state === 'RECORDING';
   const waveTint = state === 'RECORDING' ? color.recordRed : screen.red.secondary;
   const slot: ReactNode = abortedFlash ? (
     <Banner text="RECORDING ABORTED" tone="red" />
   ) : saved ? (
     <Banner text="STOPPED AND SAVED" tone="phosphor" />
   ) : (
-    <Waveform active={waveActive} tint={waveTint} level={state === 'MUTED' ? 0 : capture.level} />
+    <Waveform active={waveActive} tint={waveTint} level={capture.level} />
   );
 
   const content = (
@@ -347,16 +326,15 @@ export function useRecordingScreen({
       <ScreenTopBar
         mode={mode}
         // podczas nagrywania/mute/pauzy zmiana trybu zablokowana (pill nieklikalny)
-        onCycleMode={state === 'RECORDING' || state === 'MUTED' || state === 'PAUSED' ? undefined : onCycleMode}
+        onCycleMode={state === 'RECORDING' || state === 'PAUSED' ? undefined : onCycleMode}
         ai={ai}
-        labelActive={state === 'RECORDING' || state === 'MUTED'}
+        labelActive={state === 'RECORDING'}
         labelBlink={state === 'RECORDING'}
       />
       {/* content_area: gap 24, padding 0 16 */}
       <View style={{ flex: 1, alignSelf: 'stretch', justifyContent: 'center', gap: 24, paddingHorizontal: 16 }}>
         <View style={{ height: 53, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' }}>
           {slot}
-          {state === 'MUTED' ? <MutedBanner /> : null}
           {state === 'PAUSED' ? <PausedBanner /> : null}
         </View>
         {/* timer + podkreślenie (2px, glow) + storage (lewo, secondary) */}
@@ -379,7 +357,7 @@ export function useRecordingScreen({
             />
           </View>
           {/* podczas nagrywania/pauzy: nazwa pliku (lewo) + storage (prawo); inaczej storage wyśrodkowany */}
-          {state === 'RECORDING' || state === 'MUTED' || state === 'PAUSED' ? (
+          {state === 'RECORDING' || state === 'PAUSED' ? (
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignSelf: 'stretch' }}>
               <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>{recName}</Text>
               <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>~311h/32.3GB AVAILABLE</Text>
@@ -391,14 +369,14 @@ export function useRecordingScreen({
           )}
         </View>
       </View>
-      <BottomBar active={state === 'RECORDING' || state === 'MUTED'} mono={mono} muted={state === 'MUTED'} level={state === 'MUTED' ? 0 : capture.level} />
+      <BottomBar active={state === 'RECORDING'} mono={mono} muted={false} level={capture.level} />
     </>
   );
 
   return {
     content,
     keyboard,
-    isRecording: state === 'RECORDING' || state === 'MUTED',
-    isMuted: state === 'MUTED',
+    isRecording: state === 'RECORDING',
+    isMuted: false,
   };
 }

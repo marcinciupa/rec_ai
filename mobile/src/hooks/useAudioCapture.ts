@@ -40,10 +40,13 @@ export function useAudioCapture() {
   const recorder = useAudioRecorder(REC_OPTIONS);
   const state = useAudioRecorderState(recorder);
   const level = normLevel(state?.metering);
-  const segments = useRef<string[]>([]); // uri kolejnych segmentów (między mute/pauzami)
+  const segments = useRef<string[]>([]); // uri kolejnych segmentów (między pauzami)
+  // opcje formatu wybrane na start nagrania (RECORD MODE / COMPRESSION) — te same dla wszystkich segmentów,
+  // żeby sklejanie AAC zadziałało. Nadpisują bazowe REC_OPTIONS przez prepareToRecordAsync(Partial).
+  const fmtRef = useRef<{ numberOfChannels: number; bitRate: number }>({ numberOfChannels: 1, bitRate: 96000 });
 
   const beginSegment = async () => {
-    await recorder.prepareToRecordAsync();
+    await recorder.prepareToRecordAsync(fmtRef.current);
     recorder.record();
   };
   // zakończ bieżący segment i zachowaj jego uri
@@ -63,12 +66,14 @@ export function useAudioCapture() {
     } catch {}
   };
 
-  const start = async (): Promise<boolean> => {
+  const start = async (opts?: { stereo?: boolean; quality?: 'HIGH' | 'LOW' }): Promise<boolean> => {
     if (!REAL) return false;
     try {
       const { granted } = await requestRecordingPermissionsAsync();
       if (!granted) return false;
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
+      // RECORD MODE → kanały (stereo=2/mono=1); COMPRESSION → bitrate (HIGH=192k [BIG] / LOW=64k [SMALL])
+      fmtRef.current = { numberOfChannels: opts?.stereo ? 2 : 1, bitRate: opts?.quality === 'LOW' ? 64000 : 192000 };
       segments.current = [];
       await beginSegment();
       return true;
