@@ -5,11 +5,12 @@
  * wygląda jak label, a tapnięcie cykluje tryb.
  */
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, Animated } from 'react-native';
 import { hapticPress, hapticRelease, hapticShort } from '../lib/haptics';
 import { color, font, screen, textShadow } from '../theme/tokens';
 import { useBlink } from '../theme/BlinkContext';
 import { DeApiIcon } from '../components/icons';
+import type { AiStatusView } from '../hooks/useTranscription';
 
 export type Mode = 'RECORDING' | 'PLAYBACK' | 'SETTINGS';
 
@@ -19,6 +20,24 @@ const NEXT: Record<Mode, Mode> = {
   SETTINGS: 'RECORDING',
 };
 export const nextMode = (m: Mode): Mode => NEXT[m];
+
+/**
+ * Lewy klawisz metalowy = FIZYCZNY klawisz `STOP/BACK` — label STAŁY na wszystkich ekranach,
+ * zmienia się tylko PODŚWIETLENIE (jak PLAY/PAUSE). STOP świeci gdy jest co zatrzymać, BACK gdy dostępny
+ * powrót, oba zgaszone gdy nic. Klik = akcja podświetlona. Używać NA KAŻDYM ekranie dla metal[0].
+ */
+export function stopBackKey(opts: { canStop?: boolean; onStop?: () => void; onBack?: () => void }) {
+  const canStop = !!opts.canStop;
+  const backLit = !canStop && !!opts.onBack;
+  return {
+    type: 'label' as const,
+    upper: 'STOP',
+    lower: 'BACK',
+    active: canStop,
+    lowerActive: backLit,
+    onPress: canStop ? opts.onStop : opts.onBack,
+  };
+}
 
 /** Pigułka trybu. `active` = pełne tło + glow; inaczej wygaszone (25% tła, bez glow).
  *  `blink` = miga (1s on/off) razem z diodą LED (podczas nagrywania).
@@ -80,9 +99,27 @@ const phosphorGlow = {
   textShadowOffset: { width: 0, height: 0 },
 } as const;
 
-/** Znaczek deAPI: przygaszony (bez AI) lub aktywny z 2-liniowym tekstem (AI on). */
-function DeApiLabel({ ai }: { ai?: [string, string] }) {
-  if (!ai) {
+/** Znaczek deAPI: przygaszony (IDLE, lines=null) lub aktywny z 2-liniowym tekstem.
+ *  `pulse` (upload/processing) = ikona pulsuje opacity 1↔0.6. Kolor ZAWSZE phosphor (nigdy czerwony). */
+function DeApiLabel({ ai }: { ai?: AiStatusView }) {
+  const pulse = !!ai?.pulse;
+  const op = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!pulse) {
+      op.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(op, { toValue: 0.6, duration: 700, useNativeDriver: false }),
+        Animated.timing(op, { toValue: 1, duration: 700, useNativeDriver: false }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse, op]);
+
+  if (!ai || ai.lines === null) {
     return (
       <View style={{ opacity: 0.25 }}>
         <DeApiIcon size={24} />
@@ -91,9 +128,11 @@ function DeApiLabel({ ai }: { ai?: [string, string] }) {
   }
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      <DeApiIcon size={24} />
+      <Animated.View style={{ opacity: pulse ? op : 1 }}>
+        <DeApiIcon size={24} />
+      </Animated.View>
       <View>
-        {ai.map((line, i) => (
+        {ai.lines.map((line, i) => (
           <Text
             key={i}
             style={{
@@ -121,7 +160,7 @@ export function ScreenTopBar({
 }: {
   mode: Mode;
   onCycleMode?: () => void;
-  ai?: [string, string];
+  ai?: AiStatusView;
   labelActive?: boolean;
   labelBlink?: boolean;
 }) {

@@ -104,6 +104,15 @@ export default function App() {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => backRef.current());
     return () => sub.remove();
   }, []);
+  // Web (podgląd): brak systemowego back → Escape pełni jego rolę (zamyka panele/menu, wychodzi z odtwarzacza).
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') backRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   let content;
   let baseKeyboard;
@@ -123,11 +132,12 @@ export default function App() {
     settings.leftHanded && baseKeyboard.screen.length >= 3
       ? { ...baseKeyboard, screen: [baseKeyboard.screen[2], baseKeyboard.screen[1], baseKeyboard.screen[0]] }
       : baseKeyboard;
-  // Poza ekranem nagrywania klawisz ⏺ ZAWSZE przenosi do nagrywania.
+  // Poza ekranem nagrywania klawisz ⏺ przenosi do nagrywania — CHYBA że ekran nadał mu własną akcję
+  // (np. czat: ⏺ = nagraj pytanie głosem). Nadpisujemy tylko klawisz bez zdefiniowanego onPress.
   const keyboard: KeyboardConfig =
     mode === 'RECORDING'
       ? handed
-      : { ...handed, metal: handed.metal.map((k) => (k.type === 'record' ? { ...k, onPress: () => setMode('RECORDING') } : k)) };
+      : { ...handed, metal: handed.metal.map((k) => (k.type === 'record' && !k.onPress ? { ...k, onPress: () => setMode('RECORDING') } : k)) };
   const slider = mode === 'SETTINGS' ? settings.slider : mode === 'PLAYBACK' ? playback.slider : undefined;
 
   // schowaj splash dopiero gdy fonty gotowe (płynne przejście, bez białego błysku)
