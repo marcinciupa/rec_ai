@@ -217,6 +217,11 @@ export function useSettingsScreen({
   const [infoOpen, setInfoOpen] = useState(false); // nakładka „o aplikacji" (wiersz INFO)
   const hydrated = useRef(false); // czy wczytano zapisane ustawienia
 
+  // każde wejście w Settings → zaznaczenie wraca na pierwszy wiersz (nie zostaje tam, gdzie było)
+  useEffect(() => {
+    if (mode === 'SETTINGS') setSelected(0);
+  }, [mode]);
+
   // wczytaj zapisane wartości po starcie (mapa label→value), z poszanowaniem locked
   useEffect(() => {
     AsyncStorage.getItem(SETTINGS_KEY)
