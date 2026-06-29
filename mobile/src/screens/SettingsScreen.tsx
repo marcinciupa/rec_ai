@@ -177,7 +177,6 @@ const INITIAL_SECTIONS: SectionData[] = [
       { label: 'THEME', options: ['LIGHT', 'DARK', 'ORANGE', 'NAVY'], value: 0 },
       { label: 'FULLSCREEN', options: ['OFF', 'ON'], value: 0 },
       { label: 'MOTION', options: ['OFF', 'ON'], value: 1 },
-      { label: 'REC AS START PAGE', options: ['OFF', 'ON'], value: 0 },
       { label: 'LEFT-HANDED MODE', options: ['OFF', 'ON'], value: 0 },
       // wiersz-akcja: otwiera dialog z informacjami o aplikacji (wersja, AI itp.)
       { label: 'INFO', options: ['VIEW'], value: 0, action: true },
@@ -427,6 +426,10 @@ export function useSettingsScreen({
   const recordMono = rmItem ? rmItem.options[rmItem.value] === 'ON' : false;
   const langItem = flat.find((it) => it.label === 'AI LANGUAGE');
   const language = (langItem ? langItem.options[langItem.value] : 'ENGLISH') === 'POLISH' ? 'pl' : 'en';
+  const stlItem = flat.find((it) => it.label === 'SHOW TIME LEFT');
+  const showTimeLeft = stlItem ? stlItem.options[stlItem.value] === 'ON' : false;
+  const ksoItem = flat.find((it) => it.label === 'KEEP SCREEN ON');
+  const keepScreenOn = ksoItem ? ksoItem.options[ksoItem.value] === 'ON' : false;
 
-  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, language, optionOf, cycleByLabel };
+  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, language, showTimeLeft, keepScreenOn, optionOf, cycleByLabel };
 }

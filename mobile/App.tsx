@@ -20,6 +20,7 @@ import { usePlaybackScreen } from './src/screens/PlaybackScreen';
 import { useRecordings } from './src/hooks/useRecordings';
 import { useTranscription } from './src/hooks/useTranscription';
 import { Mode, nextMode } from './src/screens/ScreenChrome';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
 // Android dodaje includeFontPadding (extra padding wg metryk fontu) → linia tekstu wyższa niż w Figmie/na web.
 // Wyłączamy globalnie, by wysokość linii (zwł. Kode Mono) zgadzała się z projektem. (Na web/iOS no-op.)
@@ -91,6 +92,7 @@ export default function App() {
     store: recStore,
     mono: settings.recordMono,
     language: settings.language,
+    showTimeLeft: settings.showTimeLeft,
     onTyping: setChatTyping,
     mode,
     onCycleMode: cycleMode,
@@ -102,6 +104,13 @@ export default function App() {
   });
   // tryb pisania w czacie wymusza fullscreen + schowaną dolną obudowę; po wyjściu wraca do ustawienia użytkownika
   const variant = settings.fullscreen || chatTyping ? 'fullscreen' : 'device';
+
+  // KEEP SCREEN ON: gdy włączone, nie usypiaj ekranu (expo-keep-awake). Web = wake lock (best-effort).
+  useEffect(() => {
+    if (settings.keepScreenOn) activateKeepAwakeAsync('recai').catch(() => {});
+    else deactivateKeepAwake('recai').catch(() => {});
+    return () => { deactivateKeepAwake('recai').catch(() => {}); };
+  }, [settings.keepScreenOn]);
 
   // Systemowy back (Android): playback(panel→lista→nagrywanie), settings→nagrywanie, nagrywanie→wyjście.
   const backRef = useRef<() => boolean>(() => false);

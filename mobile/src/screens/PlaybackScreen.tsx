@@ -331,6 +331,7 @@ export function usePlaybackScreen({
   store,
   mono = false,
   language = 'en',
+  showTimeLeft = false,
   onTyping,
   mode = 'PLAYBACK',
   onCycleMode,
@@ -343,6 +344,7 @@ export function usePlaybackScreen({
   store: RecordingsStore;
   mono?: boolean;
   language?: string;
+  showTimeLeft?: boolean; // timer playera: pokaż czas pozostały (countdown) zamiast minionego
   onTyping?: (on: boolean) => void; // czat wszedł/wyszedł z trybu pisania (klawiatura systemowa)
   mode?: Mode;
   onCycleMode?: () => void;
@@ -851,7 +853,7 @@ export function usePlaybackScreen({
               <>
                 <View style={{ alignSelf: 'stretch' }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                    <Text style={{ fontFamily: font.timer.family, fontSize: 24, color: screen.olive.primary, ...glow('rgba(226,255,228,0.25)') }}>{fmt(uiPos)}</Text>
+                    <Text style={{ fontFamily: font.timer.family, fontSize: 24, color: screen.olive.primary, ...glow('rgba(226,255,228,0.25)') }}>{showTimeLeft ? `-${fmt(Math.max(0, uiLen - uiPos))}` : fmt(uiPos)}</Text>
                     <Text style={{ fontFamily: font.timer.family, fontSize: 20, color: screen.olive.inactive }}>{fmt(uiLen)}</Text>
                   </View>
                   <View style={{ alignSelf: 'stretch', height: 2, borderRadius: 2, backgroundColor: screen.olive.primary, boxShadow: '0px 0px 4px 0px rgba(226,255,228,0.25)', marginTop: 8 } as any} />
