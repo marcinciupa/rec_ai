@@ -310,11 +310,13 @@ export function useRecordingScreen({
   const stopActive = stopBackKey({ canStop: true, onStop: stop });
   const stopInactive = stopBackKey({ canStop: false });
   const playInactive = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
-  // w oknie SAVED: PLAY/PAUSE aktywny → przejście do playera świeżego nagrania (autostart)
-  const playSaved =
-    state === 'SAVED' && lastSavedId
-      ? { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: true, onPress: openSavedInPlayer }
-      : playInactive;
+  // PLAY/PAUSE aktywny gdy jest świeżo zapisane nagranie (istnieje w store) → przejście do playera (autostart).
+  // Nie tylko w 3-sekundowym oknie SAVED, ale też po powrocie do READY — inaczej podczas transkrypcji
+  // (dłuższej niż okno) PLAY gaśnie i trzeba by wchodzić w RECORDINGS, by odsłuchać ostatnie nagranie.
+  const lastSavedValid = !!lastSavedId && recordings.some((r) => r.id === lastSavedId);
+  const playSaved = lastSavedValid
+    ? { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: true, onPress: openSavedInPlayer }
+    : playInactive;
   // RECORDINGS → lista nagrań; widoczny tylko gdy nie nagrywamy (znika w RECORDING/MUTED/PAUSED)
   const recordingsKey = { label: 'RECORD-\nINGS', onPress: onOpenRecordings };
 
@@ -322,7 +324,7 @@ export function useRecordingScreen({
   if (state === 'READY') {
     keyboard = {
       screen: [{ label: '' }, { label: 'SETTINGS', onPress: onOpenSettings }, recordingsKey],
-      metal: [stopInactive, { type: 'record', onPress: start }, playInactive],
+      metal: [stopInactive, { type: 'record', onPress: start }, playSaved],
     };
   } else if (state === 'RECORDING') {
     keyboard = {

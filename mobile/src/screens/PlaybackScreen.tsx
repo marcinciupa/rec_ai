@@ -796,7 +796,10 @@ export function usePlaybackScreen({
     // i przy przewijaniu); pokazujemy od razu odtwarzacz. „Loading" zostaje tylko dla demo (mock).
     const loading = realMode ? false : playerState === 'LOADING';
     const playing = realMode ? pstatus.playing : playerState === 'PLAYING';
-    const started = realMode ? pstatus.playing || pstatus.currentTime > 0 : playerState === 'PLAYING' || playerState === 'PAUSED';
+    // koniec nagrania: odtwarzacz staje, ale currentTime zostaje na końcu (nie zeruje się). Bez tego
+    // `started` pozostawało true i lewy klawisz trzymał STOP zamiast wrócić do BACK. (brak didJustFinish w statusie hooka)
+    const atEnd = realMode && !pstatus.playing && pstatus.duration > 0 && pstatus.currentTime >= pstatus.duration - 0.25;
+    const started = realMode ? pstatus.playing || (pstatus.currentTime > 0 && !atEnd) : playerState === 'PLAYING' || playerState === 'PAUSED';
     // w trakcie przewijania pokazuj lokalną pozycję scrubu (płynnie), inaczej realną z odtwarzacza
     const uiPos = scrubDisplay != null ? scrubDisplay : navPos != null ? navPos : realMode ? pstatus.currentTime : pos;
     const uiLen = realMode ? pstatus.duration || sel?.lengthSec || 0 : len;
@@ -804,7 +807,7 @@ export function usePlaybackScreen({
     const segList = transcript?.segments ?? [];
     const hasSegNav = !!sel?.transcribed && segList.length > 0;
     const deleteKey = { label: 'DELETE', supporting: '[HOLD]', variant: 'risk' as const, onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 };
-    const recordKey = { type: 'record' as const, onPress: onStartRecording };
+    const recordKey = { type: 'record' as const, onPress: () => { haltPlayer(); onStartRecording?.(); } };
 
     let keyboard: KeyboardConfig;
     if (loading) {
