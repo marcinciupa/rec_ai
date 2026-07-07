@@ -9,7 +9,8 @@ import { View } from 'react-native';
 import { dims, gradient } from '../../theme/tokens';
 import { useTheme } from '../../theme/ThemeContext';
 import { Bevel } from './primitives';
-import { MetalLabelKey, RecordKey, ScreenKey, KeyVariant } from './KeyButton';
+import { MetalLabelKey, ScreenKey, KeyVariant } from './KeyButton';
+import { Joystick } from './Joystick';
 
 /** Definicja klawisza "screen" (górny rząd). `variant`: default/primary/risk/highRisk. Pusty label = klawisz bez treści. */
 export type ScreenKeyDef = {
@@ -23,10 +24,23 @@ export type ScreenKeyDef = {
   holdMs?: number;
   progress?: number; // statyczny pierścień 0..1 (np. bieg prędkości na SPEED)
 };
-/** Definicja klawisza "metal" (dolny rząd): etykietowany albo przycisk record. */
+/**
+ * Definicja klawisza "metal" (dolny rząd): etykietowany albo `record` (środek).
+ * `record` renderuje JOYSTICK (zastąpił RecordKey, Figma 375:4962): `onPress` = wciśnięcie środka
+ * (akcja REC ekranu); `onUp/onDown/onLeft/onRight` = kontekstowa nawigacja ekranu; `highlighted` = nub
+ * podświetlony (aktywna nawigacja). Bez kierunków → czysty przycisk REC (RECORDING: kierunki bezczynne).
+ */
 export type MetalKeyDef =
   | { type: 'label'; upper: string; lower?: string; active?: boolean; lowerActive?: boolean; onPress?: () => void }
-  | { type: 'record'; onPress?: () => void };
+  | {
+      type: 'record';
+      onPress?: () => void;
+      onUp?: () => void;
+      onDown?: () => void;
+      onLeft?: () => void;
+      onRight?: () => void;
+      highlighted?: boolean;
+    };
 /** Pełny układ klawiatury dla danego ekranu (3 "screen" + 3 "metal"). */
 export type KeyboardConfig = { screen: ScreenKeyDef[]; metal: MetalKeyDef[] };
 
@@ -42,7 +56,19 @@ function Row({ children }: { children: ReactNode }) {
 }
 
 function MetalKey({ def }: { def: MetalKeyDef }) {
-  if (def.type === 'record') return <RecordKey onPress={def.onPress} />;
+  if (def.type === 'record')
+    return (
+      <Joystick
+        config={{
+          highlighted: def.highlighted,
+          onPress: def.onPress,
+          onUp: def.onUp,
+          onDown: def.onDown,
+          onLeft: def.onLeft,
+          onRight: def.onRight,
+        }}
+      />
+    );
   return (
     <MetalLabelKey upper={def.upper} lower={def.lower} active={def.active} lowerActive={def.lowerActive} onPress={def.onPress} />
   );

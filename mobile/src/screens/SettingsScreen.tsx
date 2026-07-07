@@ -387,7 +387,8 @@ export function useSettingsScreen({
         metal: [
           // metal[0] = stały fizyczny STOP/BACK; w ustawieniach STOP zgaszony, BACK świeci (wyjście do poprz. ekranu)
           stopBackKey({ canStop: false, onBack: onClose }),
-          { type: 'record' },
+          // joystick = nawigacja ustawień (mirror slidera): ↑↓ pozycja wiersza, ←→ zmiana wartości
+          { type: 'record', highlighted: true, onUp: () => move(-1), onDown: () => move(1), onLeft: () => changeBy(-1), onRight: () => changeBy(1) },
           { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
         ],
       };

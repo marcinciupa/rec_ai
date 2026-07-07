@@ -89,6 +89,11 @@ export const gradient = {
   keyScreenStroke: RAISED,
   /** Połysk diody record nad czerwienią (fill_U0SF11, górna warstwa) */
   recordSheen: { colors: ['#000000', '#414141'], ...DIR_135 } as Gradient,
+  /** Bevel wypukłego grzybka joysticka — grzybek jest w CAŁOŚCI czerwony (Figma 375:4962:
+   *  „cały czerwony z glowem"). Jasna czerwień L-góra → ciemna P-dół, jak bevelButton dla metalu. */
+  bevelRed: { colors: ['#FF6E6E', '#D63A3A'], locations: [0.1, 0.9], ...DIR_135 } as Gradient,
+  /** Obrys czerwonego grzybka — jaśniejsza czerwień L-góra, ciemniejsza P-dół. */
+  recordNubStroke: { colors: ['#FF9C9C', '#B02E2E'], ...DIR_135 } as Gradient,
 } as const;
 
 /**
@@ -221,6 +226,9 @@ export const shadow = {
   keyElevation:
     '2px 2px 4px 0px rgba(26,26,26,0.05), -2px -2px 4px 0px rgba(255,255,255,0.25)', // effect_79VALX
   recordGlow: '0px 0px 4px 0px rgba(255,76,76,0.25)', // effect_HUNIJC
+  /** Mocna czerwona poświata grzybka joysticka (cały czerwony z glowem, Figma 375:4962). */
+  recordGlowStrong:
+    '0px 0px 6px 0px rgba(255,76,76,0.7), 0px 0px 14px 0px rgba(255,76,76,0.4)',
 } as const;
 
 /** Cienie tekstu (phosphor / metal labels). */
@@ -246,6 +254,10 @@ export const dims = {
   keyboardAreaHeight: 236,
   key: { size: 76, padding: 8, radius: 4 },
   keyInner: { size: 60, offset: 8, radius: 32 },
+  // Joystick w slocie klawisza (Figma 375:4962, comp „joystick"): metalowy kwadrat 76 → wklęsła
+  // studnia 66 (koło) → wypukły grzybek 24. nubTravel = zasięg przesuwu za palcem; dirThreshold =
+  // próg wychylenia odpalający kierunek (skala z gallery 64→76). Zastępuje RecordKey w środku.
+  joystick: { size: 76, well: 66, wellOffset: 5, wellRadius: 33, nub: 24, nubTravel: 14, dirThreshold: 14, dot: 12 },
   smallButton: { width: 32, height: 20, radius: 4, padding: 4 },
   knob: { width: 64, height: 20, radius: 4 },
 } as const;

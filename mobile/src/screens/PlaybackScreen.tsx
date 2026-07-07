@@ -36,6 +36,7 @@ const displayName = (r: Rec, list: Rec[]) =>
 // granie 1×. Dalej wg spec: 25%→2.5×, 50%→5×, 75%→7.5×, 100%→10× (krotność realtime, przód/tył).
 const SCRUB_STEPS = [0, 2.5, 5, 7.5, 10]; // index = bieg (level) prędkości przewijania
 const SCRUB_TICK_S = 0.1; // knob woła onScrub co ~100 ms
+const JOY_SEEK_S = 5; // joystick ←/→ w PLAYER: skok seek o ±5 s (dyskretny, per wychylenie)
 const quantizeScrub = (ratio: number) => {
   const level = Math.round(Math.min(1, Math.abs(ratio)) * 4); // 0..4
   return { level, speed: SCRUB_STEPS[level], dir: ratio < 0 ? -1 : 1 };
@@ -653,11 +654,25 @@ export function usePlaybackScreen({
     setNavPos(null); // ręczne play/pause zwalnia ewentualne wymuszenie pozycji z prev/next (odmrożenie)
     if (sel?.uri) {
       try {
-        pstatus.playing ? player.pause() : player.play();
+        if (pstatus.playing) {
+          player.pause();
+        } else {
+          // po dograniu do końca playhead stoi na końcu → samo play() nie ruszy; najpierw przewiń na start
+          const dur = pstatus.duration || sel.lengthSec || 0;
+          const atEnd = dur > 0 && pstatus.currentTime >= dur - 0.25;
+          if (atEnd) {
+            setScrubDisplay(null);
+            Promise.resolve(player.seekTo(0)).then(() => { try { player.play(); } catch {} }).catch(() => {});
+          } else {
+            player.play();
+          }
+        }
       } catch {}
       return;
     }
     if (playerState === 'LOADING') return;
+    // demo (bez pliku): na końcu play startuje od początku
+    if (playerState !== 'PLAYING' && len > 0 && pos >= len) setPos(0);
     setPlayerState((s) => (s === 'PLAYING' ? 'PAUSED' : 'PLAYING'));
   };
   const playerStop = () => {
@@ -808,6 +823,17 @@ export function usePlaybackScreen({
     const hasSegNav = !!sel?.transcribed && segList.length > 0;
     const deleteKey = { label: 'DELETE', supporting: '[HOLD]', variant: 'risk' as const, onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 };
     const recordKey = { type: 'record' as const, onPress: () => { haltPlayer(); onStartRecording?.(); } };
+    // joystick w PLAYER = mirror slidera: ↑↓ prev/next (segment gdy transkrypcja, inaczej nagranie),
+    // ←→ seek ±5 s (zachowuje bieżący stan grania). Środek nadal = REC. (gotoSegment/seekToSec zdefiniowane
+    // niżej — arrow wywoła je dopiero na gest, po inicjalizacji.)
+    const recordKeyNav = {
+      ...recordKey,
+      highlighted: true,
+      onUp: () => (hasSegNav ? gotoSegment(-1) : playerSkip(-1)),
+      onDown: () => (hasSegNav ? gotoSegment(1) : playerSkip(1)),
+      onLeft: () => seekToSec(uiPos - JOY_SEEK_S, playing),
+      onRight: () => seekToSec(uiPos + JOY_SEEK_S, playing),
+    };
 
     let keyboard: KeyboardConfig;
     if (loading) {
@@ -830,7 +856,7 @@ export function usePlaybackScreen({
         metal: [
           // gra/pauza → STOP (stop+seek0); zatrzymany → BACK (do listy)
           stopBackKey({ canStop: started, onStop: playerStop, onBack: backToList }),
-          recordKey,
+          recordKeyNav,
           { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: !playing, lowerActive: playing, onPress: playerPlayPause },
         ],
       };
@@ -1083,6 +1109,9 @@ export function usePlaybackScreen({
   let keyboard: KeyboardConfig;
   // metal[0] = stały fizyczny STOP/BACK (label niezmienny); na liście STOP zgaszony, BACK świeci (powrót/zamknięcie).
   const recordKeyList = { type: 'record' as const, onPress: onStartRecording };
+  // joystick na LIŚCIE = mirror slidera: ↑↓ wybór nagrania, ←→ cykl opcji menu zaznaczonego wiersza.
+  // Środek nadal = REC (start nagrywania). Tylko w fazie LIST — w nakładkach kierunki bezczynne.
+  const recordKeyListNav = { ...recordKeyList, highlighted: true, onUp: () => moveSel(-1), onDown: () => moveSel(1), onLeft: () => cycleMenu(-1), onRight: () => cycleMenu(1) };
   const playKeyOff = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
   if (phase === 'CONFIRM') {
     keyboard = {
@@ -1117,7 +1146,7 @@ export function usePlaybackScreen({
       metal: [
         // nic nie gra → BACK świeci (do ekranu nagrywania)
         stopBackKey({ canStop: false, onBack: onStartRecording }),
-        recordKeyList,
+        recordKeyListNav,
         // PLAY otwiera dedykowany odtwarzacz dla zaznaczonego nagrania
         { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: true, onPress: sel ? openPlayer : undefined },
       ],
