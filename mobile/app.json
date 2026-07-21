@@ -15,9 +15,8 @@
       "versionCode": 9687,
       "blockedPermissions": ["android.permission.ACTIVITY_RECOGNITION"],
       "adaptiveIcon": {
-        "backgroundColor": "#FF3636",
+        "backgroundColor": "#1A1A1A",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false
@@ -40,14 +39,14 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#000000",
+          "backgroundColor": "#1A1A1A",
           "image": "./assets/splash-icon.png",
-          "imageWidth": 180,
+          "imageWidth": 128,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#000000",
+            "backgroundColor": "#1A1A1A",
             "image": "./assets/splash-icon.png",
-            "imageWidth": 180
+            "imageWidth": 128
           }
         }
       ],
