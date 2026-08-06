@@ -42,3 +42,6 @@ yarn-error.*
 
 # session scratchpad (temp)
 scratchpad/
+
+# APK delivery counter (tools/deliver-apk.sh)
+tools/.apk-counter

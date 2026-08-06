@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "REC_AI",
+    "name": "Rec+",
     "slug": "rec-ai",
-    "version": "0.9687",
+    "version": "0.972",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "com.glue010.recai",
-      "versionCode": 9687,
+      "versionCode": 9720,
       "blockedPermissions": ["android.permission.ACTIVITY_RECOGNITION"],
       "adaptiveIcon": {
         "backgroundColor": "#1A1A1A",
@@ -30,7 +30,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Pozwól REC_AI nagrywać dźwięk z mikrofonu.",
+          "microphonePermission": "Pozwól Rec+ nagrywać dźwięk z mikrofonu.",
           "recordAudioAndroid": true,
           "enableBackgroundRecording": false
         }

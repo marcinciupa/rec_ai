@@ -15,6 +15,7 @@ import { shareRecording } from '../lib/share';
 import type { Transcript } from '../lib/types';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig, ScreenKeyDef } from '../components/chrome/Keyboard';
+import type { KeyIconName } from '../components/icons/keyIcons.gen';
 import type { SliderConfig } from '../components/chrome/SeekSlider';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 import type { Rec, RecordingsStore } from '../hooks/useRecordings';
@@ -59,6 +60,8 @@ const glow = (c: string) => ({ textShadowColor: c, textShadowRadius: 4, textShad
 // Prędkość odtwarzania: biegi i odpowiadające im wypełnienie pierścienia na klawiszu SPEED.
 const SPEED_LEVELS = [1, 1.5, 2, 3];
 const speedFill = (s: number) => Math.max(0, SPEED_LEVELS.indexOf(s)) * 0.25; // 1×=0, 1.5×=.25, 2×=.5, 3×=.75
+// ikona biegu (tryb KEY ICONS) — Figma 496:24601 speed_1x/1_5x/2x/3x
+const SPEED_ICON: Record<number, KeyIconName> = { 1: 'speed_1x', 1.5: 'speed_1_5x', 2: 'speed_2x', 3: 'speed_3x' };
 // timestamp segmentu transkryptu w formacie M:SS (Figma „0:00", „0:12")
 const fmtShort = (sec: number) => {
   const s = Math.max(0, Math.floor(sec));
@@ -438,6 +441,32 @@ export function usePlaybackScreen({
   const listRowRefs = useRef<Map<string, View>>(new Map());
   const listOffset = useRef(0);
   const listViewport = useRef(0);
+  const listContentH = useRef(0);
+
+  // FLING listy (knob slidera = jedyna kontrolka analogowa na tym ekranie): dopóki knob jest wychylony,
+  // przewijamy widok z prędkością proporcjonalną do wychylenia. Martwa strefa 15% (żeby drobne drgnięcie
+  // nie ruszało listy). Zaznaczenie zostaje na miejscu — krokowy wybór to domena joysticka.
+  const flingRate = useRef(0);
+  const flingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const FLING_PX_PER_S = 1100;
+  const stopFling = () => {
+    if (flingTimer.current) { clearInterval(flingTimer.current); flingTimer.current = null; }
+  };
+  const flingList = (rate: number) => {
+    flingRate.current = Math.abs(rate) < 0.15 ? 0 : rate;
+    if (flingTimer.current) return;
+    flingTimer.current = setInterval(() => {
+      const r = flingRate.current;
+      if (!r) return;
+      const maxY = Math.max(0, listContentH.current - listViewport.current);
+      const next = Math.max(0, Math.min(maxY, listOffset.current + r * FLING_PX_PER_S * 0.06));
+      if (next === listOffset.current) return; // koniec listy — nie spamuj scrollTo
+      listOffset.current = next;
+      listScrollRef.current?.scrollTo({ y: next, animated: false });
+    }, 60);
+  };
+  const flingEnd = () => { flingRate.current = 0; stopFling(); };
+  useEffect(() => () => stopFling(), []);
 
   const idx = Math.max(0, recs.findIndex((r) => r.id === selId));
   const sel: Rec | undefined = recs[idx];
@@ -822,24 +851,25 @@ export function usePlaybackScreen({
     const segList = transcript?.segments ?? [];
     const hasSegNav = !!sel?.transcribed && segList.length > 0;
     const deleteKey = { label: 'DELETE', supporting: '[HOLD]', variant: 'risk' as const, onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 };
-    const recordKey = { type: 'record' as const, onPress: () => { haltPlayer(); onStartRecording?.(); } };
-    // joystick w PLAYER = mirror slidera: ↑↓ prev/next (segment gdy transkrypcja, inaczej nagranie),
-    // ←→ seek ±5 s (zachowuje bieżący stan grania). Środek nadal = REC. (gotoSegment/seekToSec zdefiniowane
-    // niżej — arrow wywoła je dopiero na gest, po inicjalizacji.)
-    const recordKeyNav = {
-      ...recordKey,
+    // joystick w PLAYER — gramatyka jak wszędzie: ↑↓ = pozycja na LIŚCIE nagrań (poprzednie/następne),
+    // ←→ = ruch WEWNĄTRZ nagrania (seek ±5 s), środek = ZATWIERDŹ, czyli play/pause bieżącego nagrania.
+    // Grzybek metalowy — tu nic nie nagrywa. (playerSkip/seekToSec zdefiniowane niżej — arrow wywoła je
+    // dopiero na gest, po inicjalizacji.)
+    const joyPlayer = {
       highlighted: true,
-      onUp: () => (hasSegNav ? gotoSegment(-1) : playerSkip(-1)),
-      onDown: () => (hasSegNav ? gotoSegment(1) : playerSkip(1)),
+      onUp: () => playerSkip(-1),
+      onDown: () => playerSkip(1),
       onLeft: () => seekToSec(uiPos - JOY_SEEK_S, playing),
       onRight: () => seekToSec(uiPos + JOY_SEEK_S, playing),
+      onPress: () => playerPlayPause(),
     };
 
     let keyboard: KeyboardConfig;
     if (loading) {
       keyboard = {
         screen: [{ label: '' }, { label: '' }, { label: '' }],
-        metal: [stopBackKey({ canStop: false, onBack: backToList }), recordKey, { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+        metal: [stopBackKey({ canStop: false, onBack: backToList }), { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+        joystick: {},
       };
     } else {
       keyboard = {
@@ -851,14 +881,14 @@ export function usePlaybackScreen({
               ? { label: 'TRANS-\nCRIBE', onPress: transcribe }
               : { label: '' },
           // gra → prędkość odtwarzania z pierścieniem biegu (1×/1.5×/2×/3×); pauza/stop → wolny slot (BACK jest na metalu)
-          playing ? { label: `${speed}X\nSPEED`, supporting: '[CYCLE]', onPress: cycleSpeed, progress: speedFill(speed) } : { label: '' },
+          playing ? { label: `${speed}X\nSPEED`, icon: SPEED_ICON[speed], supporting: '[CYCLE]', onPress: cycleSpeed, progress: speedFill(speed) } : { label: '' },
         ],
         metal: [
           // gra/pauza → STOP (stop+seek0); zatrzymany → BACK (do listy)
           stopBackKey({ canStop: started, onStop: playerStop, onBack: backToList }),
-          recordKeyNav,
           { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: !playing, lowerActive: playing, onPress: playerPlayPause },
         ],
+        joystick: joyPlayer,
       };
     }
 
@@ -990,12 +1020,15 @@ export function usePlaybackScreen({
         setPlayerState('PLAYING');
       }
     };
+    // Slider = kontrolka ANALOGOWA: knob to shuttle (płynne przewijanie taśmy o zmiennej prędkości).
+    // Przyciski ⏪⏩ skaczą po SEGMENTACH transkryptu (ruch po treści) — świecą tylko gdy transkrypt
+    // istnieje. Krokowe „poprzednie/następne nagranie" należy do joysticka, więc się tu nie powtarza.
     const slider: SliderConfig | undefined = loading
       ? undefined
       : {
           highlighted: true,
-          onPrev: hasSegNav ? () => gotoSegment(-1) : () => playerSkip(-1),
-          onNext: hasSegNav ? () => gotoSegment(1) : () => playerSkip(1),
+          onPrev: hasSegNav ? () => gotoSegment(-1) : undefined,
+          onNext: hasSegNav ? () => gotoSegment(1) : undefined,
           onScrub,
           onScrubEnd,
         };
@@ -1056,12 +1089,13 @@ export function usePlaybackScreen({
   // brak nagrań → prosty komunikat „No recordings." (DELETE/PLAY nieaktywne, tylko SETTINGS)
   if (recs.length === 0) {
     const keyboard: KeyboardConfig = {
-      screen: [{ label: '' }, { label: 'SETTINGS', onPress: onOpenSettings }, { label: '' }],
+      // pusta lista: nie ma po czym nawigować → gałka bezczynna, nagrywanie pod nazwanym klawiszem REC
+      screen: [{ label: '' }, { label: 'SETTINGS', onPress: onOpenSettings }, { label: 'REC', onPress: onStartRecording }],
       metal: [
         stopBackKey({ canStop: false, onBack: onStartRecording }),
-        { type: 'record', onPress: onStartRecording },
         { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
       ],
+      joystick: {},
     };
     const content = (
       <>
@@ -1108,10 +1142,18 @@ export function usePlaybackScreen({
 
   let keyboard: KeyboardConfig;
   // metal[0] = stały fizyczny STOP/BACK (label niezmienny); na liście STOP zgaszony, BACK świeci (powrót/zamknięcie).
-  const recordKeyList = { type: 'record' as const, onPress: onStartRecording };
-  // joystick na LIŚCIE = mirror slidera: ↑↓ wybór nagrania, ←→ cykl opcji menu zaznaczonego wiersza.
-  // Środek nadal = REC (start nagrywania). Tylko w fazie LIST — w nakładkach kierunki bezczynne.
-  const recordKeyListNav = { ...recordKeyList, highlighted: true, onUp: () => moveSel(-1), onDown: () => moveSel(1), onLeft: () => cycleMenu(-1), onRight: () => cycleMenu(1) };
+  // joystick na LIŚCIE: ↑↓ wybór nagrania (przytrzymanie = repeat), ←→ cykl opcji zaznaczonego wiersza,
+  // środek = ZATWIERDŹ, czyli wykonaj podświetloną opcję (to samo, co nazywa klawisz akcji obok).
+  // W nakładkach (CONFIRM/DELETED/DETAILS) gałka bezczynna — nie ruszamy listy pod panelem.
+  const joyList = {
+    highlighted: true,
+    repeat: 'vertical' as const,
+    onUp: () => moveSel(-1),
+    onDown: () => moveSel(1),
+    onLeft: () => cycleMenu(-1),
+    onRight: () => cycleMenu(1),
+    onPress: () => focusedOpt?.run(),
+  };
   const playKeyOff = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
   if (phase === 'CONFIRM') {
     keyboard = {
@@ -1120,44 +1162,50 @@ export function usePlaybackScreen({
         { label: '' },
         { label: 'CANCEL', onPress: cancelDelete },
       ],
-      metal: [stopBackKey({ canStop: false, onBack: cancelDelete }), recordKeyList, playKeyOff],
+      metal: [stopBackKey({ canStop: false, onBack: cancelDelete }), playKeyOff],
+      joystick: {},
     };
   } else if (phase === 'DELETED') {
     keyboard = {
       // UNDO hold = 2× krótszy niż DELETE (1000 vs 2000 ms) — szybsze cofnięcie
       screen: [{ label: '' }, { label: 'UNDO', supporting: '[HOLD]', variant: 'primary', onHoldStart: armDeletedDismiss, onHoldComplete: undo, holdMs: 1000 }, { label: '' }],
-      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), recordKeyList, playKeyOff],
+      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), playKeyOff],
+      joystick: {},
     };
   } else if (phase === 'DETAILS') {
     keyboard = {
       // CLOSE jak w INFO (Settings): klawisz #1 zamyka nakładkę (lub fizyczny BACK)
       screen: [{ label: 'CLOSE', variant: 'primary', onPress: () => setPhase('LIST') }, { label: '' }, { label: '' }],
-      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), recordKeyList, playKeyOff],
+      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), playKeyOff],
+      joystick: {},
     };
   } else {
     keyboard = {
-      // klawisz akcji = aktywna opcja inline (ASK AI / SHARE / SHOW DETAILS / DELETE[HOLD]) · SETTINGS · MENU[CYCLE].
+      // klawisz akcji = aktywna opcja inline (ASK AI / SHARE / SHOW DETAILS / DELETE[HOLD]) · SETTINGS · REC.
       // DELETE niesie pełną mechanikę potwierdzania (tap→CONFIRM, hold→usuń) bezpośrednio na klawiszu akcji.
+      // Slot po zdjętym MENU [CYCLE] (kopia poziomu joysticka) przejmuje REC — nazwane wyjście do nagrywania,
+      // bo grzybek przestał być skrótem do nagrywania.
       screen: [
         actionKey,
         { label: 'SETTINGS', onPress: onOpenSettings },
-        { label: 'MENU', supporting: '[CYCLE]', onPress: () => cycleMenu(1) },
+        // (ikona `rec` — czerwona kropka — jest na liście do dorysowania; do tego czasu klawisz jest tekstowy)
+        { label: 'REC', onPress: onStartRecording },
       ],
       metal: [
         // nic nie gra → BACK świeci (do ekranu nagrywania)
         stopBackKey({ canStop: false, onBack: onStartRecording }),
-        recordKeyListNav,
         // PLAY otwiera dedykowany odtwarzacz dla zaznaczonego nagrania
         { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: true, onPress: sel ? openPlayer : undefined },
       ],
+      joystick: joyList,
     };
   }
 
-  // Slider jak w Settings: przyciski prev/next przechodzą między nagraniami, knob (discrete) cyklą opcje menu.
+  // Slider na liście = kontrolka ANALOGOWA: knob przewija widok listy płynnie (im dalej wychylony, tym
+  // szybciej), a zaznaczenie zostaje tam, gdzie było — krokowy wybór nagrania należy do joysticka.
+  // Przyciski ⏪⏩ wygaszone (nie mają tu analogowego znaczenia).
   const slider: SliderConfig | undefined =
-    phase === 'LIST'
-      ? { highlighted: true, discrete: true, onPrev: () => moveSel(-1), onNext: () => moveSel(1), onAdjust: (dir) => cycleMenu(dir) }
-      : undefined;
+    phase === 'LIST' ? { highlighted: true, onScrub: flingList, onScrubEnd: flingEnd } : undefined;
 
   const content = (
     <>
@@ -1171,6 +1219,7 @@ export function usePlaybackScreen({
           scrollEventThrottle={16}
           onScroll={(e) => { listOffset.current = e.nativeEvent.contentOffset.y; }}
           onLayout={(e) => { listViewport.current = e.nativeEvent.layout.height; }}
+          onContentSizeChange={(_w, h) => { listContentH.current = h; }}
         >
           {/* DETAILS ma własny scrim (jak INFO) → NIE przyciemniaj listy, inaczej podwójne ciemne tło.
               CONFIRM/DELETED mają pełny panel → dim listy zostaje. */}

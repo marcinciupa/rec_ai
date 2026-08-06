@@ -3,9 +3,9 @@
  * Steruje TYMI SAMYMI ustawieniami co ekran Settings (optionOf/optionsOf/cycleByLabel) → zmiany trwałe,
  * podgląd na żywo (motyw/fullscreen obudowy za nakładką). Nakładka mieści się w ekranie urządzenia.
  *
- * Nawigacja JAK W SETTINGS: slider prev/next przesuwa zaznaczenie, knob/klawisz #1 zmienia wartość
- * zaznaczonego wiersza (etykieta = wartość docelowa, jak kontekstowy klawisz w Settings), tap też wybiera+zmienia.
- * CONFIRM (środkowy klawisz) kończy onboarding.
+ * Nawigacja JAK W SETTINGS — i to tu użytkownik uczy się joysticka: ↑↓ przesuwa zaznaczenie,
+ * ←→ / środek zmienia wartość zaznaczonego wiersza. Klawisz #1 nazywa tę zmianę (wartość docelowa),
+ * CONFIRM kończy onboarding, tap w wiersz też wybiera+zmienia. Slider wygaszony (nic tu nie płynie).
  */
 import { useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
@@ -23,6 +23,7 @@ const WELCOME_ROWS: { key: string; label: string }[] = [
   { key: 'TRANSCRIPTION', label: 'TRANSCRIPTION' },
   { key: 'THEME', label: 'THEME' },
   { key: 'VIEW', label: 'VIEW' },
+  { key: 'KEY ICONS', label: 'KEY ICONS' },
 ];
 // długie wartości łamane na klawiszu (jak w Settings keyWrap)
 const KEY_WRAP: Record<string, string> = { FULLSCREEN: 'FULL-\nSCREEN', 'SYSTEM DEFAULT': 'SYSTEM\nDEFAULT' };
@@ -68,22 +69,30 @@ export function useWelcomeDialog({
   const key1Label = KEY_WRAP[nextVal] ?? nextVal;
 
   const keyboard: KeyboardConfig = {
-    // CHANGE (kontekstowy) · CONFIRM (kończy) · NEXT [CYCLE] (przesuwa zaznaczenie) — reszta metalu zgaszona
+    // CHANGE (kontekstowy) · CONFIRM (kończy) · pusto — NEXT [CYCLE] zdjęty, przesuwanie należy do joysticka
     screen: [
       // [CYCLE] jako default support gdy >2 opcje (THEME); 2-opcyjne → bez supportu
       { label: key1Label, supporting: opts.length > 2 ? '[CYCLE]' : undefined, variant: 'primary', onPress: changeSel },
       { label: 'CONFIRM', variant: 'primary', onPress: onFinish },
-      { label: 'NEXT', supporting: '[CYCLE]', onPress: () => move(1) },
+      { label: '' },
     ],
-    metal: [
-      stopBackKey({ canStop: false }),
-      { type: 'record' },
-      { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
-    ],
+    metal: [stopBackKey({ canStop: false }), { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+    // pierwszy kontakt z gałką: ↑↓ wiersz, ←→ / środek wartość (ta sama gramatyka co w całej apce)
+    joystick: {
+      highlighted: true,
+      repeat: 'vertical',
+      onUp: () => move(-1),
+      onDown: () => move(1),
+      // ← i → robią to samo (cykl w przód): API onboardingu to `cycleByLabel`, które nie umie iść wstecz.
+      // Zgodne z konwencją [CYCLE] na klawiszu — wartości jest tu po 2-3, więc cykl wystarcza.
+      onLeft: changeSel,
+      onRight: changeSel,
+      onPress: changeSel,
+    },
   };
 
-  // slider jak w Settings: prev/next = zaznaczenie, knob (discrete) = zmiana wartości
-  const slider: SliderConfig = { highlighted: true, discrete: true, onPrev: () => move(-1), onNext: () => move(1), onAdjust: () => changeSel() };
+  // slider wygaszony — onboarding uczy joysticka, nie shuttle'a
+  const slider: SliderConfig | undefined = undefined;
 
   const overlay = (
     // mieści się w ekranie urządzenia (renderowany w slocie Display, obok treści)
@@ -94,8 +103,9 @@ export function useWelcomeDialog({
         {WELCOME_ROWS.map((r, i) => (
           <PickRow key={r.key} label={r.label} value={optionOf(r.key)} selected={i === selected} onPress={() => tapRow(i)} />
         ))}
-        {/* nawigacja: slider/CHANGE edytuje, CONFIRM startuje */}
-        <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary, textAlign: 'center', marginTop: 4, ...glow }}>CHANGE TO EDIT · CONFIRM TO START</Text>
+        {/* nauka gramatyki gałki — pierwszy ekran apki musi ją pokazać, inaczej joystick zostaje nieodkryty */}
+        <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary, textAlign: 'center', marginTop: 4, ...glow }}>USE THE STICK — UP/DOWN SELECTS, LEFT/RIGHT CHANGES</Text>
+        <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary, textAlign: 'center', ...glow }}>CONFIRM TO START</Text>
       </View>
     </View>
   );

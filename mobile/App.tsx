@@ -166,12 +166,10 @@ export default function App() {
     settings.leftHanded && baseKeyboard.screen.length >= 3
       ? { ...baseKeyboard, screen: [baseKeyboard.screen[2], baseKeyboard.screen[1], baseKeyboard.screen[0]] }
       : baseKeyboard;
-  // Poza ekranem nagrywania klawisz ⏺ przenosi do nagrywania — CHYBA że ekran nadał mu własną akcję
-  // (np. czat: ⏺ = nagraj pytanie głosem). Nadpisujemy tylko klawisz bez zdefiniowanego onPress.
-  const keyboard: KeyboardConfig =
-    mode === 'RECORDING'
-      ? handed
-      : { ...handed, metal: handed.metal.map((k) => (k.type === 'record' && !k.onPress ? { ...k, onPress: () => setMode('RECORDING') } : k)) };
+  // Joystick jest kontrolką NAWIGACJI (środek = zatwierdź), więc App nie podmienia mu już akcji na
+  // „przejdź do nagrywania" — każdy ekran definiuje swój joystick sam, a wyjście do nagrywania ma
+  // nazwane klawisze (REC na liście, BACK na metalu).
+  const keyboard: KeyboardConfig = handed;
   const baseSlider = mode === 'SETTINGS' ? settings.slider : mode === 'PLAYBACK' ? playback.slider : undefined;
   // onboarding: własna nawigacja jak w Settings (CHANGE/CONFIRM/NEXT + slider) — z hooka welcome
   const welcome = useWelcomeDialog({ optionOf: settings.optionOf, optionsOf: settings.optionsOf, cycleByLabel: settings.cycleByLabel, onFinish: finishWelcome });
@@ -217,14 +215,16 @@ export default function App() {
           recording={mode === 'RECORDING' && recording.isRecording}
           muted={mode === 'RECORDING' && recording.isMuted}
           theme={settings.theme}
-          motion={settings.motion}
+          // parallax z akcelerometru WYŁĄCZONY na stałe — jak w gallery_ai (obudowa stoi w miejscu)
+          motion={false}
           keyboard={finalKeyboard}
+          keyIcons={settings.keyIcons}
           slider={slider}
           hideControls={chatTyping}
           onPinch={(dir) => settings.setFullscreen(dir === 'out')}
         >
           {content}
-          {/* onboarding mieści się W EKRANIE urządzenia (slot Display), jak inne dialogi */}
+          {/* onboarding W EKRANIE urządzenia (slot Display), wyśrodkowany — NIE zasłania klawiszy/slidera pod obudową */}
           {showWelcome ? welcome.overlay : null}
         </DeviceShell>
       </View>

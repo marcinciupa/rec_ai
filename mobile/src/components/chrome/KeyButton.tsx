@@ -13,6 +13,25 @@ import { useTheme } from '../../theme/ThemeContext';
 import { useTiltCtx } from '../../theme/TiltContext';
 import { hapticPress, hapticRelease, hapticShort, hapticHold, hapticCancel } from '../../lib/haptics';
 import { Bevel } from './primitives';
+import { KeyIcon } from '../icons/KeyIcon';
+import type { KeyIconName } from '../icons/keyIcons.gen';
+
+// Label klawisza → nazwa ikony (zestaw wspólny z gallery_ai). Mapujemy TYLKO labelki z pasującą ikoną
+// generyczną; klawisze specyficzne dla dyktafonu (REC/STOP/TRANSCRIBE/ASK AI…) zostają tekstem do czasu
+// dołożenia dedykowanego zestawu ikon rec_ai z Figmy. Patrz DESIGN_JOYSTICK.md/ikonowy backlog.
+const LABEL_ICON: Record<string, KeyIconName> = {
+  BACK: 'back', CLOSE: 'close', CANCEL: 'close', ABORT: 'close', MENU: 'menu', CONFIRM: 'confirm',
+  ACCEPT: 'confirm', YES: 'confirm', NEXT: 'skip', PLAY: 'start', INFO: 'info', SHARE: 'send',
+  UNDO: 'undo', DELETE: 'delete', 'KEY-\nBOARD': 'keyboard', SAVE: 'save', RESET: 'reset',
+  // ikony specyficzne dla dyktafonu (Figma 496:24601, dodane 2026-07-24)
+  SETTINGS: 'settings', STOP: 'stop', PAUSE: 'pause', MUTE: 'mute', UNMUTE: 'unmute',
+  DETAILS: 'details', TASKS: 'to_do_list', SUMMARY: 'summary', 'SUM-\nMARY': 'summary',
+  'KEY POINTS': 'ai_key_points', 'KEY\nPOINTS': 'ai_key_points',
+  TRANSCRIBE: 'transcribe', 'TRANS-\nCRIBE': 'transcribe',
+  RECORDINGS: 'recordings', 'RECORD-\nINGS': 'recordings',
+  'ASK AI': 'ai_chat', 'ASK\nAI': 'ai_chat',
+  // SPEED: ikona zależna od biegu — patrz jawny `icon` na klawiszu w PlaybackScreen (speed_1x…10x).
+};
 import { ScreenMatrix } from './ScreenMatrix';
 
 /**
@@ -45,9 +64,9 @@ export function ClickedDim({ radius }: { radius?: number } = {}) {
  * 60×60 nad miską klawisza, wypełnia się 0→1 w trakcie hold. Driven by Animated.Value.
  */
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-function ProgressRing({ progress, ringColor }: { progress: Animated.Value; ringColor: string }) {
+function ProgressRing({ progress, ringColor, dot }: { progress: Animated.Value; ringColor: string; dot?: boolean }) {
   const size = dims.keyInner.size; // 60
-  const sw = 2;
+  const sw = 4; // 2× grubość; kropka = sw, r = (size-sw)/2 trzyma krawędź na size/2 (średnica inner_reduction)
   const r = (size - sw) / 2;
   const c = 2 * Math.PI * r;
   const offset = progress.interpolate({ inputRange: [0, 1], outputRange: [c, 0] });
@@ -66,6 +85,8 @@ function ProgressRing({ progress, ringColor }: { progress: Animated.Value; ringC
           strokeLinecap="round"
           transform={`rotate(-90 ${size / 2} ${size / 2})`}
         />
+        {/* kropka w punkcie STARTU pierścienia (góra, 12:00), średnica = szerokość ringa */}
+        {dot ? <Circle cx={size / 2} cy={sw / 2} r={sw / 2} fill={ringColor} /> : null}
       </Svg>
     </View>
   );
@@ -75,9 +96,9 @@ function ProgressRing({ progress, ringColor }: { progress: Animated.Value; ringC
  * StaticRing — statyczny pierścień (Figma 121:269 „progress") wypełniony w `fraction` (0..1).
  * Używany np. na klawiszu SPEED do pokazania biegu prędkości (0/25/50/75%). Start od dołu (180°).
  */
-function StaticRing({ fraction, ringColor }: { fraction: number; ringColor: string }) {
+function StaticRing({ fraction, ringColor, dot }: { fraction: number; ringColor: string; dot?: boolean }) {
   const size = dims.keyInner.size; // 60
-  const sw = 2;
+  const sw = 4; // 2× grubość; kropka = sw, r = (size-sw)/2 trzyma krawędź na size/2 (średnica inner_reduction)
   const r = (size - sw) / 2;
   const c = 2 * Math.PI * r;
   const f = Math.max(0, Math.min(1, fraction));
@@ -96,6 +117,8 @@ function StaticRing({ fraction, ringColor }: { fraction: number; ringColor: stri
           strokeLinecap="round"
           transform={`rotate(90 ${size / 2} ${size / 2})`}
         />
+        {/* kropka w punkcie STARTU pierścienia (dół, 6:00), średnica = szerokość ringa */}
+        {dot ? <Circle cx={size / 2} cy={size - sw / 2} r={sw / 2} fill={ringColor} /> : null}
       </Svg>
     </View>
   );
@@ -260,6 +283,8 @@ export function ScreenKey({
   onHoldStart,
   holdMs = 2000,
   progress: progressFraction,
+  icons,
+  icon,
 }: {
   label: string;
   supporting?: string;
@@ -270,7 +295,10 @@ export function ScreenKey({
   onHoldStart?: () => void;
   holdMs?: number;
   progress?: number; // statyczny pierścień 0..1 (np. bieg prędkości na SPEED); niezależny od holdu
+  icons?: boolean; // tryb KEY ICONS — renderuj ikonę zamiast tekstu (gdy label mapuje się na ikonę)
+  icon?: KeyIconName; // jawna ikona — nadpisuje mapę LABEL_ICON
 }) {
+  const iconName = icon ?? LABEL_ICON[label];
   // kolor tekstu: primary/highRisk = ciemny (na jasnym tle, bez glow); risk = czerwony+glow; default = phosphor+glow
   const dark = variant === 'primary' || variant === 'highRisk';
   const fg = dark ? color.dark1A : variant === 'risk' ? color.recordRed : color.phosphor;
@@ -331,32 +359,45 @@ export function ScreenKey({
       onPressIn={onHoldComplete ? startHold : undefined}
       onPressOut={onHoldComplete ? cancelHold : undefined}
     >
-      {onHoldComplete ? <ProgressRing progress={progress} ringColor={ringColor} /> : null}
-      {progressFraction != null ? <StaticRing fraction={progressFraction} ringColor={ringColor} /> : null}
-      <Text
-        style={{
-          fontFamily: font.monoLabel.family,
-          fontSize: font.monoLabel.size,
-          color: fg,
-          textAlign: 'center',
-          ...glow,
-        }}
-      >
-        {label}
-      </Text>
-      {supporting ? (
-        <Text
-          style={{
-            fontFamily: font.monoCaption.family,
-            fontSize: font.monoCaption.size,
-            color: fg,
-            textAlign: 'center',
-            ...glow,
-          }}
+      {onHoldComplete ? <ProgressRing progress={progress} ringColor={ringColor} dot={!!(icons && iconName)} /> : null}
+      {progressFraction != null ? <StaticRing fraction={progressFraction} ringColor={ringColor} dot={!!(icons && iconName)} /> : null}
+      {icons && iconName ? (
+        // TRYB IKON: sam glif wyśrodkowany; support (np. [HOLD]) NIE jest tekstem — zastępuje go kropka
+        // na starcie pierścienia (patrz ProgressRing/StaticRing `dot`).
+        <View
+          pointerEvents="none"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}
         >
-          {supporting}
-        </Text>
-      ) : null}
+          <KeyIcon name={iconName} size={26} color={fg} glow={!!glow} />
+        </View>
+      ) : (
+        <>
+          <Text
+            style={{
+              fontFamily: font.monoLabel.family,
+              fontSize: font.monoLabel.size,
+              color: fg,
+              textAlign: 'center',
+              ...glow,
+            }}
+          >
+            {label}
+          </Text>
+          {supporting ? (
+            <Text
+              style={{
+                fontFamily: font.monoCaption.family,
+                fontSize: font.monoCaption.size,
+                color: fg,
+                textAlign: 'center',
+                ...glow,
+              }}
+            >
+              {supporting}
+            </Text>
+          ) : null}
+        </>
+      )}
     </KeyButton>
   );
 }
@@ -398,16 +439,6 @@ export function MetalLabelKey({
           <Text style={[base, lowerActive ? lineGlow : null, { color: lowerActive ? t.buttonActive : t.buttonInactive }]}>{lower}</Text>
         ) : null}
       </View>
-    </KeyButton>
-  );
-}
-
-/** Klawisz record — wypukła miska z czerwoną diodą (kolor wg motywu, Body Red; bez poświaty). */
-export function RecordKey({ onPress }: { onPress?: () => void }) {
-  const t = useTheme();
-  return (
-    <KeyButton surface="metal" dish="elevation" onPress={onPress}>
-      <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: t.recordRed }} />
     </KeyButton>
   );
 }

@@ -39,8 +39,10 @@ function SeekButton({
   onPress?: () => void;
 }) {
   const t = useTheme();
-  // podświetlenie wg motywu (jak klawisze): t.buttonActive (biały na LIGHT/DARK, bursztyn ORANGE, błękit NAVY)
-  const iconFill = highlighted ? t.buttonActive : t.printed;
+  // podświetlenie wg motywu (jak klawisze): t.buttonActive (biały na LIGHT/DARK, bursztyn ORANGE, błękit NAVY).
+  // Przycisk bez akcji zostaje NADRUKIEM (przygaszony) nawet gdy slider jest aktywny — inaczej świeciłby
+  // na biało i obiecywał funkcję, której nie ma (np. skok po segmentach bez transkryptu).
+  const iconFill = highlighted && onPress ? t.buttonActive : t.printed;
   return (
     <Pressable
       onPress={onPress}

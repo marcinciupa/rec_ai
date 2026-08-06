@@ -40,6 +40,7 @@ function Body({
   muted,
   motion,
   keyboard,
+  keyIcons,
   slider,
   hideControls,
   onPinch,
@@ -50,6 +51,7 @@ function Body({
   muted?: boolean;
   motion?: boolean;
   keyboard?: KeyboardConfig;
+  keyIcons?: boolean;
   slider?: SliderConfig;
   hideControls?: boolean; // tryb pisania w czacie: chowa dolną obudowę (slider+klawiatura+dolny mic) pod klawiaturę systemową
   onPinch?: (dir: 'in' | 'out') => void;
@@ -202,7 +204,7 @@ function Body({
           (kbH→0 / wyjście z trybu) wraca do pełnej, domyślnej wysokości. */}
       <View style={[{ alignSelf: 'stretch', alignItems: 'center' }, hideControls && kbH > 0 ? { height: kbH, overflow: 'hidden' } : null]}>
         <SeekSlider config={slider} />
-        <Keyboard config={keyboard} />
+        <Keyboard config={keyboard} keyIcons={keyIcons} />
         <LowerMic />
       </View>
       {/* BEVEL OBUDOWY (Figma 160:2195 stroke-light/stroke-shadow). micH = pas górny, screenH = szyba.
@@ -269,6 +271,7 @@ export function DeviceShell({
   theme = 'LIGHT',
   motion = false,
   keyboard,
+  keyIcons,
   slider,
   hideControls,
   onPinch,
@@ -280,6 +283,7 @@ export function DeviceShell({
   theme?: ThemeName;
   motion?: boolean;
   keyboard?: KeyboardConfig;
+  keyIcons?: boolean;
   slider?: SliderConfig;
   hideControls?: boolean;
   onPinch?: (dir: 'in' | 'out') => void;
@@ -303,6 +307,7 @@ export function DeviceShell({
             muted={muted}
             motion={motion}
             keyboard={keyboard}
+            keyIcons={keyIcons}
             slider={slider}
             hideControls={hideControls}
             onPinch={onPinch}
@@ -326,6 +331,7 @@ export function DeviceShell({
             muted={muted}
             motion={motion}
             keyboard={keyboard}
+            keyIcons={keyIcons}
             slider={slider}
             hideControls={hideControls}
             onPinch={onPinch}
