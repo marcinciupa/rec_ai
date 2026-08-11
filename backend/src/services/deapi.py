@@ -1,9 +1,10 @@
 """Klient deAPI — submit transkrypcji z webhookiem (BEZ pollingu) + parsowanie wyniku.
 
-UWAGA: dokładny kształt requestu/odpowiedzi deAPI jest do potwierdzenia żywym kluczem.
-Publiczne docs: v1 POST /api/v1/client/aud2txt (audio_url, include_ts, model) → request_id +
-request-status/{id} → result_url. STACK.md §18: v2 POST /api/v2/audio/transcriptions (source_file
-multipart, webhook_url+webhook_secret RAZEM). Endpoint/pola są sterowane configiem — łatwo przełączyć."""
+Kształt POTWIERDZONY żywym kluczem (2026-08-11): v2 POST /api/v2/audio/transcriptions, plik jako
+multipart `source_file`, webhook_url+webhook_secret RAZEM. Pola formularza: model, include_ts,
+language oraz — dla modelu CT2 — diarize (bool) i ts_level (enum, `word`).
+`GET /api/v2/request-status/{id}` z v1-owych docsów NIE ISTNIEJE (404) — nie ma po co pollować,
+i tak jedziemy webhookiem. Endpoint/model sterowane configiem."""
 import ipaddress
 import json
 from urllib.parse import urlsplit
@@ -70,8 +71,32 @@ def parse_transcript_payload(payload) -> dict:
             ts = s.get("timestamp")
             if start is None and isinstance(ts, list) and len(ts) == 2:
                 start, end = ts[0], ts[1]
-            segments.append({"start": start, "end": end, "text": s.get("text") or s.get("transcript") or ""})
+            seg = {
+                "start": start,
+                "end": end,
+                "text": s.get("text") or s.get("transcript") or "",
+                # tylko advanced+diarize; None dla standard → apka chowa kolumnę rozmówców
+                "speaker": s.get("speaker"),
+                "words": _parse_words(s.get("words")),
+            }
+            segments.append(seg)
     return {"transcript": text, "segments": segments, "language": data.get("language")}
+
+
+def _parse_words(raw) -> list[dict] | None:
+    """Słowa z czasami (advanced + ts_level=word). `score` odrzucamy — apka go nie używa,
+    a każde słowo leci przez sieć do SQLite na urządzeniu."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for w in raw:
+        if not isinstance(w, dict):
+            continue
+        word = w.get("word") or w.get("text")
+        if not word:
+            continue
+        out.append({"word": word, "start": w.get("start"), "end": w.get("end"), "speaker": w.get("speaker")})
+    return out or None
 
 
 class DeApiClient:
@@ -95,22 +120,34 @@ class DeApiClient:
         r.raise_for_status()
         return r.json()
 
-    async def submit_transcription(self, *, filename: str, data: bytes, mime: str, language: str | None = None) -> str:
+    async def submit_transcription(
+        self, *, filename: str, data: bytes, mime: str, language: str | None = None, engine: str = "standard"
+    ) -> str:
         """Zgłasza plik audio (multipart) do transkrypcji z callbackiem webhook. Zwraca request_id.
         deAPI przyjmuje plik wprost, woła nasz webhook po zakończeniu — nie pollujemy.
-        webhook_url + webhook_secret MUSZĄ iść RAZEM i być HTTPS."""
+        webhook_url + webhook_secret MUSZĄ iść RAZEM i być HTTPS.
+
+        `engine` to nazwa z settings.engines (walidowana w routerze), nie slug modelu od klienta.
+        Dla `advanced` dokładamy flagi, których stary model nie zna:
+          diarize=true    → segmenty/słowa dostają `speaker` ("SPEAKER_00", …)
+          ts_level=word   → segmenty dostają `words` z czasem każdego słowa
+        Obie zweryfikowane żywym kluczem 2026-08-11 (walidator deAPI potwierdził nazwy pól)."""
         webhook_url = self.s.webhook_url
         if not webhook_url or not self.s.deapi_webhook_secret:
             raise DeApiError(
                 "webhook not configured: ustaw API_PUBLIC_URL (lub DEAPI_WEBHOOK_URL_OVERRIDE) "
                 "oraz DEAPI_WEBHOOK_SECRET — przepływ tylko-webhook, bez pollingu"
             )
+        model = self.s.engines.get(engine) or self.s.deapi_model
         form = {
-            "model": self.s.deapi_model,
+            "model": model,
             "include_ts": "true",
             "webhook_url": webhook_url,
             "webhook_secret": self.s.deapi_webhook_secret,
         }
+        if engine == "advanced":
+            form["diarize"] = "true"
+            form["ts_level"] = "word"
         if language:
             form["language"] = language
         files = {"source_file": (filename, data, mime)}

@@ -2,10 +2,22 @@
 from pydantic import BaseModel, Field
 
 
+class Word(BaseModel):
+    """Pojedyncze słowo z czasem — tylko silnik `advanced` z ts_level=word. Pozwala aplikacji
+    podświetlać transkrypt CO DO SŁOWA zamiast dzielić tekst proporcjonalnie po znakach.
+    `score` z deAPI świadomie pomijamy — apka go nie używa, a leci na urządzenie i do SQLite."""
+    word: str
+    start: float | None = None
+    end: float | None = None
+    speaker: str | None = None
+
+
 class Segment(BaseModel):
     start: float | None = None
     end: float | None = None
     text: str
+    speaker: str | None = None  # np. "SPEAKER_00" (tylko advanced + diarize); apka mapuje na 1, 2, 3…
+    words: list[Word] | None = None
 
 
 class TranscriptionResponse(BaseModel):
@@ -15,6 +27,9 @@ class TranscriptionResponse(BaseModel):
     transcript: str | None = None
     segments: list[Segment] | None = None
     language: str | None = None
+    # Którym silnikiem policzone — apka zapisuje to przy notatce, żeby wiedzieć, czy ma dane
+    # rozmówców (kolumna numerków w widoku transkrypcji) i czy karaoke może iść po słowach.
+    engine: str | None = None
 
 
 class ChatMessage(BaseModel):

@@ -30,7 +30,18 @@ class Settings(BaseSettings):
     # Akceptowane typy: audio/aac, audio/x-hx-aac-adts, audio/mpeg, audio/mp4, audio/x-m4a, audio/ogg,
     # audio/wav, audio/webm, audio/flac, video/webm. Apka nagrywa .aac (audio/aac) — OK.
     deapi_transcribe_path: str = "/api/v2/audio/transcriptions"
-    deapi_model: str = "WhisperLargeV3"
+    # Dwa silniki wybierane przez apkę (SettingsScreen → AI ENGINE). Klient przysyła NAZWĘ SILNIKA
+    # ("standard"/"advanced"), nie slug modelu — inaczej ktoś z kluczem apki zamawiałby dowolny,
+    # dowolnie drogi model na nasz rachunek. Mapowanie i lista dozwolonych żyją TUTAJ.
+    deapi_model: str = "WhisperLargeV3"  # standard: zwraca .txt, timestampy wklejone w tekst
+    # advanced: zwraca JSON — czysty text + segments(start/end) + language; z diarize/ts_level także
+    # speaker i words (patrz submit_transcription). Zweryfikowane żywym kluczem 2026-08-11.
+    deapi_model_advanced: str = "WhisperLargeV3Ct2"
+
+    @property
+    def engines(self) -> dict[str, str]:
+        """Dozwolone silniki → slug modelu deAPI. Jedyne źródło prawdy dla walidacji `engine`."""
+        return {"standard": self.deapi_model, "advanced": self.deapi_model_advanced}
     deapi_timeout_s: float = 30.0  # timeout requestu submit
     deapi_result_wait_s: float = 120.0  # ile request API czeka na webhook (bez pollingu)
     waiter_result_ttl_s: int = 900  # jak długo trzymać wynik webhooka (idempotencja + spóźniony webhook)
