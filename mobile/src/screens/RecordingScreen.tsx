@@ -16,6 +16,7 @@ import { deriveAiStatus, type TranscriptionStore } from '../hooks/useTranscripti
 import { persistRecording } from '../lib/recordingFiles';
 import { uuidv4 } from '../lib/uuid';
 import { hapticRecordStart, hapticRecordStop } from '../lib/haptics';
+import { useStorageLabel } from '../hooks/useStorage';
 
 // redukcja obwiedni do N słupków (peak w każdym przedziale)
 const downsample = (arr: number[], n: number): number[] => {
@@ -145,6 +146,9 @@ export function useRecordingScreen({
   transcription?: TranscriptionStore;
 }) {
   const capture = useAudioCapture();
+  // wolne miejsce: przelicza się przy zmianie jakości (inny bitrate → inne godziny) i po każdym
+  // przybyciu/ubyciu nagrania; null = nie dało się odczytać → linijki po prostu nie ma
+  const storage = useStorageLabel(quality, recordings.length);
   // nazwa pliku, który teraz powstaje: generyczna z dzisiejszej daty + kolejny numer dnia
   const recDate = today();
   const recSeq = nextSeq(recordings, recDate);
@@ -409,13 +413,13 @@ export function useRecordingScreen({
           {state === 'RECORDING' || state === 'PAUSED' ? (
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignSelf: 'stretch' }}>
               <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>{recName}</Text>
-              <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>~311h/32.3GB AVAILABLE</Text>
+              {storage ? <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>{storage}</Text> : null}
             </View>
-          ) : (
+          ) : storage ? (
             <View style={{ flexDirection: 'row', justifyContent: 'center', alignSelf: 'stretch' }}>
-              <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>~311h/32.3GB AVAILABLE</Text>
+              <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>{storage}</Text>
             </View>
-          )}
+          ) : null}
         </View>
       </View>
       <BottomBar active={state === 'RECORDING'} mono={mono} quality={quality} muted={false} level={capture.level} />

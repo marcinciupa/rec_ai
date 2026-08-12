@@ -462,6 +462,16 @@ export function useSettingsScreen({
               })}
             </Section>
           ))}
+
+          {/* STOPKA — bliźniaczo z gallery_ai (SettingsScreen), z treścią dla rec_ai. Trzy linie:
+              nazwa (mono, phosphor z poświatą) · opis · wersja z copyrightem, każda słabsza od
+              poprzedniej. Bez easter-egga z 10× tapnięciem, który jest w gallery — tam odkrywa
+              sekcję DIAGNOSTICS (HUD wydajności), a w rec_ai nie ma czego odkrywać. */}
+          <View style={{ alignItems: 'center', gap: 2, paddingTop: 8, paddingBottom: 4 }}>
+            <Text style={{ fontFamily: font.monoHeading.family, fontSize: font.monoHeading.size, color: screen.olive.primary, ...phosphorGlow }}>REC_AI</Text>
+            <Text style={{ fontFamily: font.monoCaption.family, fontSize: font.monoCaption.size, color: screen.olive.secondary, textAlign: 'center' }}>SKEUOMORPHIC VOICE NOTES + AI</Text>
+            <Text style={{ fontFamily: font.monoCaption.family, fontSize: font.monoCaption.size, color: screen.olive.inactive, textAlign: 'center', marginTop: 2 }}>{`VERSION ${APP_VERSION}  ·  © 2026`}</Text>
+          </View>
         </View>
       </ScrollView>
 

@@ -12,6 +12,7 @@ import { usePlayer } from '../hooks/usePlayer';
 import { hapticKnob, hapticContinuous } from '../lib/haptics';
 import { getTranscript } from '../lib/db';
 import { speakerNumbers, spokenCutFromWords } from '../lib/transcript';
+import { useStorageLabel } from '../hooks/useStorage';
 import { shareRecording } from '../lib/share';
 import type { Transcript, Word, Engine } from '../lib/types';
 import { color, font, screen } from '../theme/tokens';
@@ -448,6 +449,8 @@ export function usePlaybackScreen({
   onToggleTimer?: () => void; // tap timera w playerze → przełącz ELAPSED/REMAINING (PLAYBACK TIMER w Settings)
 }) {
   const { recordings: recs, removeById, insertAt } = store;
+  // wolne miejsce (realne) — odświeżane przy zmianie jakości i liczby nagrań; null → linijki brak
+  const storage = useStorageLabel(quality, recs.length);
   const [rawSel, setSelId] = useState<string>('');
   // selId zawsze ważne (po dodaniu/usunięciu nagrań fallback na pierwsze)
   const selId = recs.some((r) => r.id === rawSel) ? rawSel : recs[0]?.id ?? '';
@@ -1121,7 +1124,7 @@ export function usePlaybackScreen({
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                   <Text style={capStyle}>{nameSize}</Text>
-                  <Text style={capStyle}>~311h/32.3GB AVAILABLE</Text>
+                  {storage ? <Text style={capStyle}>{storage}</Text> : null}
                 </View>
               </>
             )}
