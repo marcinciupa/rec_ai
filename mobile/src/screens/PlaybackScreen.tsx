@@ -11,10 +11,12 @@ import { View, Text, Pressable, ScrollView } from 'react-native';
 import { usePlayer } from '../hooks/usePlayer';
 import { hapticKnob, hapticContinuous } from '../lib/haptics';
 import { getTranscript } from '../lib/db';
+import { speakerNumbers, spokenCutFromWords } from '../lib/transcript';
 import { shareRecording } from '../lib/share';
-import type { Transcript } from '../lib/types';
+import type { Transcript, Word, Engine } from '../lib/types';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig, ScreenKeyDef } from '../components/chrome/Keyboard';
+import type { KeyIconName } from '../components/icons/keyIcons.gen';
 import type { SliderConfig } from '../components/chrome/SeekSlider';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 import type { Rec, RecordingsStore } from '../hooks/useRecordings';
@@ -36,6 +38,7 @@ const displayName = (r: Rec, list: Rec[]) =>
 // granie 1×. Dalej wg spec: 25%→2.5×, 50%→5×, 75%→7.5×, 100%→10× (krotność realtime, przód/tył).
 const SCRUB_STEPS = [0, 2.5, 5, 7.5, 10]; // index = bieg (level) prędkości przewijania
 const SCRUB_TICK_S = 0.1; // knob woła onScrub co ~100 ms
+const JOY_SEEK_S = 5; // joystick ←/→ w PLAYER: skok seek o ±5 s (dyskretny, per wychylenie)
 const quantizeScrub = (ratio: number) => {
   const level = Math.round(Math.min(1, Math.abs(ratio)) * 4); // 0..4
   return { level, speed: SCRUB_STEPS[level], dir: ratio < 0 ? -1 : 1 };
@@ -58,6 +61,8 @@ const glow = (c: string) => ({ textShadowColor: c, textShadowRadius: 4, textShad
 // Prędkość odtwarzania: biegi i odpowiadające im wypełnienie pierścienia na klawiszu SPEED.
 const SPEED_LEVELS = [1, 1.5, 2, 3];
 const speedFill = (s: number) => Math.max(0, SPEED_LEVELS.indexOf(s)) * 0.25; // 1×=0, 1.5×=.25, 2×=.5, 3×=.75
+// ikona biegu (tryb KEY ICONS) — Figma 496:24601 speed_1x/1_5x/2x/3x
+const SPEED_ICON: Record<number, KeyIconName> = { 1: 'speed_1x', 1.5: 'speed_1_5x', 2: 'speed_2x', 3: 'speed_3x' };
 // timestamp segmentu transkryptu w formacie M:SS (Figma „0:00", „0:12")
 const fmtShort = (sec: number) => {
   const s = Math.max(0, Math.floor(sec));
@@ -127,12 +132,14 @@ function PlayWaveform({ ratio, dim, samples }: { ratio: number; dim?: boolean; s
   );
 }
 
-// Pojedynczy segment transkryptu w playerze (Figma 288:3568): kolumna timestampów [start/koniec]
-// + tekst Mono/Body. Tekst (karaoke) wg pozycji: odtworzony = jasny; bieżący = wypowiedziana część
-// jasna, reszta przyciemniona; nadchodzący = cały przyciemniony. Timestampy NIEZALEŻNIE od karaoke:
-// cała para rozjaśnia się z chwilą rozpoczęcia sekcji (posSec ≥ startN); bieżąca sekcja = glow (kursor).
-// Tap w kolumnę timestampów → seek do startu sekcji + odtwarzanie (onSeek).
-function TranscriptRow({ startN, endN, endLabel, text, posSec, onSeek }: { startN: number; endN: number; endLabel: string; text: string; posSec: number; onSeek?: (sec: number) => void }) {
+// Pojedynczy segment transkryptu w playerze (Figma 288:3568, wariant z rozmówcami 682:5200):
+// kolumna [kafel rozmówcy / timestamp start / timestamp koniec] + tekst Mono/Body.
+// Tekst (karaoke) wg pozycji: odtworzony = jasny; bieżący = wypowiedziana część jasna, reszta
+// przyciemniona; nadchodzący = cały przyciemniony. Podział bieżącego liczony CO DO SŁOWA, gdy
+// segment ma `words`; inaczej proporcjonalnie po znakach (stare zachowanie).
+// Timestampy i kafel NIEZALEŻNIE od karaoke: rozjaśniają się z chwilą rozpoczęcia sekcji
+// (posSec ≥ startN); bieżąca sekcja = glow (kursor). Tap → seek do startu sekcji + odtwarzanie.
+function TranscriptRow({ startN, endN, endLabel, text, words, speaker, posSec, onSeek }: { startN: number; endN: number; endLabel: string; text: string; words?: Word[] | null; speaker?: string | null; posSec: number; onSeek?: (sec: number) => void }) {
   const bright = screen.olive.primary;
   const dim = screen.olive.secondary;
   const played = posSec >= endN; // segment w całości za nami
@@ -143,9 +150,11 @@ function TranscriptRow({ startN, endN, endLabel, text, posSec, onSeek }: { start
   let bodyNode: ReactNode;
   if (played) {
     bodyNode = <Text style={{ color: bright }}>{text}</Text>;
-  } else if (current && isFinite(endN) && endN > startN) {
+  } else if (current && (spokenCutFromWords(text, words, posSec) != null || (isFinite(endN) && endN > startN))) {
+    // słowa (advanced) → dokładny podział; brak słów → przybliżenie proporcjonalne po znakach
+    const byWords = spokenCutFromWords(text, words, posSec);
     const frac = Math.max(0, Math.min(1, (posSec - startN) / (endN - startN)));
-    const cut = Math.round(text.length * frac);
+    const cut = byWords ?? Math.round(text.length * frac);
     bodyNode = (
       <>
         <Text style={{ color: bright }}>{text.slice(0, cut)}</Text>
@@ -165,6 +174,22 @@ function TranscriptRow({ startN, endN, endLabel, text, posSec, onSeek }: { start
   return (
     <View style={{ flexDirection: 'row', alignSelf: 'stretch', alignItems: 'flex-start', gap: 8 }}>
       <Pressable onPress={seek} hitSlop={8}>
+        {/* Kafel rozmówcy (Figma 682:5200). Rozciąga się na szerokość kolumny, którą wyznaczają
+            timestampy pod spodem („0:00" = 4 znaki) — dlatego mieści też 3-znakowy skrót imienia
+            bez zmiany layoutu. Zapalony, gdy sekcja się zaczęła; inaczej przygaszony jak czasy. */}
+        {speaker ? (
+          <View
+            style={{
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 2,
+              backgroundColor: started ? bright : dim,
+              ...(started ? ({ boxShadow: '0px 0px 4px 0px rgba(226,255,228,0.25)' } as any) : null),
+            }}
+          >
+            <Text style={{ ...cap, color: color.dark21 }}>{speaker}</Text>
+          </View>
+        ) : null}
         <Text style={{ ...cap, color: started ? bright : dim, ...(current ? glow('rgba(226,255,228,0.25)') : null) }}>{fmtShort(startN)}</Text>
         <Text style={{ ...cap, color: started ? bright : dim, marginTop: -2 }}>{endLabel}</Text>
       </Pressable>
@@ -184,13 +209,27 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
   const sizes = useRef({ content: 0, view: 0 });
   const hasSegs = !!(segs && segs.length);
 
+  // Kolumnę rozmówców pokazujemy DOPIERO od dwóch osób. Przy jednym mówcy (dyktowanie, notatka
+  // głosowa, stary silnik bez diaryzacji) numerek przy każdym wierszu nic nie wnosi, a zabiera
+  // szerokość tekstowi — więc go chowamy.
+  const speakers = hasSegs ? speakerNumbers(segs!) : new Map<string, number>();
+  const showSpeakers = speakers.size >= 2;
+
   // granice czasowe segmentów (koniec = własny end → start następnego → ∞ dla ostatniego)
   const rows = hasSegs
     ? segs!.map((s, i) => {
         const startN = s.start ?? 0;
         const nextStart = segs![i + 1]?.start ?? null;
         const endN = s.end ?? nextStart ?? Infinity;
-        return { startN, endN, endLabel: s.end != null || nextStart != null ? fmtShort(s.end ?? nextStart!) : '', text: s.text.trim() };
+        const no = s.speaker ? speakers.get(s.speaker) : undefined;
+        return {
+          startN,
+          endN,
+          endLabel: s.end != null || nextStart != null ? fmtShort(s.end ?? nextStart!) : '',
+          text: s.text.trim(),
+          words: s.words ?? null,
+          speaker: showSpeakers && no != null ? String(no) : null,
+        };
       })
     : [];
   // indeks bieżącego segmentu (do auto-scrolla); poza zakresem → pierwszy/ostatni
@@ -224,7 +263,9 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
       showsVerticalScrollIndicator={false}
     >
       {hasSegs ? (
-        rows.map((r, i) => <TranscriptRow key={i} startN={r.startN} endN={r.endN} endLabel={r.endLabel} text={r.text} posSec={posSec} onSeek={onSeek} />)
+        rows.map((r, i) => (
+          <TranscriptRow key={i} startN={r.startN} endN={r.endN} endLabel={r.endLabel} text={r.text} words={r.words} speaker={r.speaker} posSec={posSec} onSeek={onSeek} />
+        ))
       ) : (
         <Text style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, lineHeight: Math.round(font.monoBody.size * 1.5) }}>
           <Text style={{ color: screen.olive.primary }}>{text.slice(0, at)}</Text>
@@ -382,6 +423,7 @@ export function usePlaybackScreen({
   onOpenSettings,
   onStartRecording,
   transcription,
+  engine,
   pendingPlayId,
   onConsumePending,
   recordingsRequest = 0,
@@ -398,6 +440,7 @@ export function usePlaybackScreen({
   onOpenSettings?: () => void;
   onStartRecording?: () => void;
   transcription?: TranscriptionStore;
+  engine?: Engine; // silnik transkrypcji z Settings (AI ENGINE) — dotyczy NOWYCH zleceń
   // żądanie z ekranu nagrywania: otwórz PLAYER dla tego nagrania i od razu graj (autostart)
   pendingPlayId?: string | null;
   onConsumePending?: () => void;
@@ -437,6 +480,32 @@ export function usePlaybackScreen({
   const listRowRefs = useRef<Map<string, View>>(new Map());
   const listOffset = useRef(0);
   const listViewport = useRef(0);
+  const listContentH = useRef(0);
+
+  // FLING listy (knob slidera = jedyna kontrolka analogowa na tym ekranie): dopóki knob jest wychylony,
+  // przewijamy widok z prędkością proporcjonalną do wychylenia. Martwa strefa 15% (żeby drobne drgnięcie
+  // nie ruszało listy). Zaznaczenie zostaje na miejscu — krokowy wybór to domena joysticka.
+  const flingRate = useRef(0);
+  const flingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const FLING_PX_PER_S = 1100;
+  const stopFling = () => {
+    if (flingTimer.current) { clearInterval(flingTimer.current); flingTimer.current = null; }
+  };
+  const flingList = (rate: number) => {
+    flingRate.current = Math.abs(rate) < 0.15 ? 0 : rate;
+    if (flingTimer.current) return;
+    flingTimer.current = setInterval(() => {
+      const r = flingRate.current;
+      if (!r) return;
+      const maxY = Math.max(0, listContentH.current - listViewport.current);
+      const next = Math.max(0, Math.min(maxY, listOffset.current + r * FLING_PX_PER_S * 0.06));
+      if (next === listOffset.current) return; // koniec listy — nie spamuj scrollTo
+      listOffset.current = next;
+      listScrollRef.current?.scrollTo({ y: next, animated: false });
+    }, 60);
+  };
+  const flingEnd = () => { flingRate.current = 0; stopFling(); };
+  useEffect(() => () => stopFling(), []);
 
   const idx = Math.max(0, recs.findIndex((r) => r.id === selId));
   const sel: Rec | undefined = recs[idx];
@@ -653,11 +722,25 @@ export function usePlaybackScreen({
     setNavPos(null); // ręczne play/pause zwalnia ewentualne wymuszenie pozycji z prev/next (odmrożenie)
     if (sel?.uri) {
       try {
-        pstatus.playing ? player.pause() : player.play();
+        if (pstatus.playing) {
+          player.pause();
+        } else {
+          // po dograniu do końca playhead stoi na końcu → samo play() nie ruszy; najpierw przewiń na start
+          const dur = pstatus.duration || sel.lengthSec || 0;
+          const atEnd = dur > 0 && pstatus.currentTime >= dur - 0.25;
+          if (atEnd) {
+            setScrubDisplay(null);
+            Promise.resolve(player.seekTo(0)).then(() => { try { player.play(); } catch {} }).catch(() => {});
+          } else {
+            player.play();
+          }
+        }
       } catch {}
       return;
     }
     if (playerState === 'LOADING') return;
+    // demo (bez pliku): na końcu play startuje od początku
+    if (playerState !== 'PLAYING' && len > 0 && pos >= len) setPos(0);
     setPlayerState((s) => (s === 'PLAYING' ? 'PAUSED' : 'PLAYING'));
   };
   const playerStop = () => {
@@ -755,7 +838,16 @@ export function usePlaybackScreen({
   // ── TRANS-CRIBE: realna transkrypcja przez manager (upload → backend). Wymaga pliku (uri). ──
   const transcribe = () => {
     if (!sel || sel.transcribed || !sel.uri) return; // demo bez pliku → nie ma czego transkrybować
-    transcription?.start(sel);
+    transcription?.start(sel, { engine });
+  };
+
+  // ── RE-TRANS-CRIBE: przelicz notatkę JESZCZE RAZ bieżącym silnikiem (AI ENGINE w Settings).
+  // Sens: notatka policzona przed przełączeniem na ADVANCED nie ma rozmówców ani czasów słów —
+  // bez tej akcji nowy widok byłby widoczny wyłącznie dla nagrań zrobionych po zmianie ustawienia.
+  // Nadpisuje poprzedni transkrypt (i tytuł od AI). Wymaga pliku — notatki demo odpadają.
+  const retranscribe = () => {
+    if (!sel?.uri) return;
+    transcription?.start(sel, { engine });
   };
 
   // statusbar AI zaznaczonego nagrania (wspólny deriver): job (UPLOADING/PROCESSING/DONE)
@@ -796,7 +888,10 @@ export function usePlaybackScreen({
     // i przy przewijaniu); pokazujemy od razu odtwarzacz. „Loading" zostaje tylko dla demo (mock).
     const loading = realMode ? false : playerState === 'LOADING';
     const playing = realMode ? pstatus.playing : playerState === 'PLAYING';
-    const started = realMode ? pstatus.playing || pstatus.currentTime > 0 : playerState === 'PLAYING' || playerState === 'PAUSED';
+    // koniec nagrania: odtwarzacz staje, ale currentTime zostaje na końcu (nie zeruje się). Bez tego
+    // `started` pozostawało true i lewy klawisz trzymał STOP zamiast wrócić do BACK. (brak didJustFinish w statusie hooka)
+    const atEnd = realMode && !pstatus.playing && pstatus.duration > 0 && pstatus.currentTime >= pstatus.duration - 0.25;
+    const started = realMode ? pstatus.playing || (pstatus.currentTime > 0 && !atEnd) : playerState === 'PLAYING' || playerState === 'PAUSED';
     // w trakcie przewijania pokazuj lokalną pozycję scrubu (płynnie), inaczej realną z odtwarzacza
     const uiPos = scrubDisplay != null ? scrubDisplay : navPos != null ? navPos : realMode ? pstatus.currentTime : pos;
     const uiLen = realMode ? pstatus.duration || sel?.lengthSec || 0 : len;
@@ -804,13 +899,25 @@ export function usePlaybackScreen({
     const segList = transcript?.segments ?? [];
     const hasSegNav = !!sel?.transcribed && segList.length > 0;
     const deleteKey = { label: 'DELETE', supporting: '[HOLD]', variant: 'risk' as const, onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 };
-    const recordKey = { type: 'record' as const, onPress: onStartRecording };
+    // joystick w PLAYER — gramatyka jak wszędzie: ↑↓ = pozycja na LIŚCIE nagrań (poprzednie/następne),
+    // ←→ = ruch WEWNĄTRZ nagrania (seek ±5 s), środek = ZATWIERDŹ, czyli play/pause bieżącego nagrania.
+    // Grzybek metalowy — tu nic nie nagrywa. (playerSkip/seekToSec zdefiniowane niżej — arrow wywoła je
+    // dopiero na gest, po inicjalizacji.)
+    const joyPlayer = {
+      highlighted: true,
+      onUp: () => playerSkip(-1),
+      onDown: () => playerSkip(1),
+      onLeft: () => seekToSec(uiPos - JOY_SEEK_S, playing),
+      onRight: () => seekToSec(uiPos + JOY_SEEK_S, playing),
+      onPress: () => playerPlayPause(),
+    };
 
     let keyboard: KeyboardConfig;
     if (loading) {
       keyboard = {
         screen: [{ label: '' }, { label: '' }, { label: '' }],
-        metal: [stopBackKey({ canStop: false, onBack: backToList }), recordKey, { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+        metal: [stopBackKey({ canStop: false, onBack: backToList }), { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+        joystick: {},
       };
     } else {
       keyboard = {
@@ -822,14 +929,14 @@ export function usePlaybackScreen({
               ? { label: 'TRANS-\nCRIBE', onPress: transcribe }
               : { label: '' },
           // gra → prędkość odtwarzania z pierścieniem biegu (1×/1.5×/2×/3×); pauza/stop → wolny slot (BACK jest na metalu)
-          playing ? { label: `${speed}X\nSPEED`, supporting: '[CYCLE]', onPress: cycleSpeed, progress: speedFill(speed) } : { label: '' },
+          playing ? { label: `${speed}X\nSPEED`, icon: SPEED_ICON[speed], supporting: '[CYCLE]', onPress: cycleSpeed, progress: speedFill(speed) } : { label: '' },
         ],
         metal: [
           // gra/pauza → STOP (stop+seek0); zatrzymany → BACK (do listy)
           stopBackKey({ canStop: started, onStop: playerStop, onBack: backToList }),
-          recordKey,
           { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: !playing, lowerActive: playing, onPress: playerPlayPause },
         ],
+        joystick: joyPlayer,
       };
     }
 
@@ -961,12 +1068,15 @@ export function usePlaybackScreen({
         setPlayerState('PLAYING');
       }
     };
+    // Slider = kontrolka ANALOGOWA: knob to shuttle (płynne przewijanie taśmy o zmiennej prędkości).
+    // Przyciski ⏪⏩ skaczą po SEGMENTACH transkryptu (ruch po treści) — świecą tylko gdy transkrypt
+    // istnieje. Krokowe „poprzednie/następne nagranie" należy do joysticka, więc się tu nie powtarza.
     const slider: SliderConfig | undefined = loading
       ? undefined
       : {
           highlighted: true,
-          onPrev: hasSegNav ? () => gotoSegment(-1) : () => playerSkip(-1),
-          onNext: hasSegNav ? () => gotoSegment(1) : () => playerSkip(1),
+          onPrev: hasSegNav ? () => gotoSegment(-1) : undefined,
+          onNext: hasSegNav ? () => gotoSegment(1) : undefined,
           onScrub,
           onScrubEnd,
         };
@@ -1027,12 +1137,13 @@ export function usePlaybackScreen({
   // brak nagrań → prosty komunikat „No recordings." (DELETE/PLAY nieaktywne, tylko SETTINGS)
   if (recs.length === 0) {
     const keyboard: KeyboardConfig = {
-      screen: [{ label: '' }, { label: 'SETTINGS', onPress: onOpenSettings }, { label: '' }],
+      // pusta lista: nie ma po czym nawigować → gałka bezczynna, nagrywanie pod nazwanym klawiszem REC
+      screen: [{ label: '' }, { label: 'SETTINGS', onPress: onOpenSettings }, { label: 'REC', onPress: onStartRecording }],
       metal: [
         stopBackKey({ canStop: false, onBack: onStartRecording }),
-        { type: 'record', onPress: onStartRecording },
         { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
       ],
+      joystick: {},
     };
     const content = (
       <>
@@ -1053,6 +1164,7 @@ export function usePlaybackScreen({
     ? [
         ...(sel.uri && !sel.transcribed ? [{ label: 'TRANSCRIBE', run: transcribe }] : []),
         ...(sel.uri && sel.transcribed ? [{ label: 'ASK AI', run: () => { haltPlayer(); setView('CHAT'); } }] : []),
+        ...(sel.uri && sel.transcribed ? [{ label: 'RE-TRANSCRIBE', run: retranscribe, keyLabel: 'RE-TRANS-\nCRIBE' }] : []),
         ...(sel.uri ? [{ label: 'SHARE', run: () => { shareRecording(sel.uri, displayName(sel, recs)); } }] : []),
         { label: 'DETAILS', run: () => setPhase('DETAILS'), keyLabel: 'SHOW DETAILS' },
         // DELETE (Figma 288:3942): czerwona opcja inline + klawisz High Risk z pełną mechaniką:
@@ -1079,7 +1191,18 @@ export function usePlaybackScreen({
 
   let keyboard: KeyboardConfig;
   // metal[0] = stały fizyczny STOP/BACK (label niezmienny); na liście STOP zgaszony, BACK świeci (powrót/zamknięcie).
-  const recordKeyList = { type: 'record' as const, onPress: onStartRecording };
+  // joystick na LIŚCIE: ↑↓ wybór nagrania (przytrzymanie = repeat), ←→ cykl opcji zaznaczonego wiersza,
+  // środek = ZATWIERDŹ, czyli wykonaj podświetloną opcję (to samo, co nazywa klawisz akcji obok).
+  // W nakładkach (CONFIRM/DELETED/DETAILS) gałka bezczynna — nie ruszamy listy pod panelem.
+  const joyList = {
+    highlighted: true,
+    repeat: 'vertical' as const,
+    onUp: () => moveSel(-1),
+    onDown: () => moveSel(1),
+    onLeft: () => cycleMenu(-1),
+    onRight: () => cycleMenu(1),
+    onPress: () => focusedOpt?.run(),
+  };
   const playKeyOff = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
   if (phase === 'CONFIRM') {
     keyboard = {
@@ -1088,44 +1211,50 @@ export function usePlaybackScreen({
         { label: '' },
         { label: 'CANCEL', onPress: cancelDelete },
       ],
-      metal: [stopBackKey({ canStop: false, onBack: cancelDelete }), recordKeyList, playKeyOff],
+      metal: [stopBackKey({ canStop: false, onBack: cancelDelete }), playKeyOff],
+      joystick: {},
     };
   } else if (phase === 'DELETED') {
     keyboard = {
       // UNDO hold = 2× krótszy niż DELETE (1000 vs 2000 ms) — szybsze cofnięcie
       screen: [{ label: '' }, { label: 'UNDO', supporting: '[HOLD]', variant: 'primary', onHoldStart: armDeletedDismiss, onHoldComplete: undo, holdMs: 1000 }, { label: '' }],
-      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), recordKeyList, playKeyOff],
+      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), playKeyOff],
+      joystick: {},
     };
   } else if (phase === 'DETAILS') {
     keyboard = {
       // CLOSE jak w INFO (Settings): klawisz #1 zamyka nakładkę (lub fizyczny BACK)
       screen: [{ label: 'CLOSE', variant: 'primary', onPress: () => setPhase('LIST') }, { label: '' }, { label: '' }],
-      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), recordKeyList, playKeyOff],
+      metal: [stopBackKey({ canStop: false, onBack: () => setPhase('LIST') }), playKeyOff],
+      joystick: {},
     };
   } else {
     keyboard = {
-      // klawisz akcji = aktywna opcja inline (ASK AI / SHARE / SHOW DETAILS / DELETE[HOLD]) · SETTINGS · MENU[CYCLE].
+      // klawisz akcji = aktywna opcja inline (ASK AI / SHARE / SHOW DETAILS / DELETE[HOLD]) · SETTINGS · REC.
       // DELETE niesie pełną mechanikę potwierdzania (tap→CONFIRM, hold→usuń) bezpośrednio na klawiszu akcji.
+      // Slot po zdjętym MENU [CYCLE] (kopia poziomu joysticka) przejmuje REC — nazwane wyjście do nagrywania,
+      // bo grzybek przestał być skrótem do nagrywania.
       screen: [
         actionKey,
         { label: 'SETTINGS', onPress: onOpenSettings },
-        { label: 'MENU', supporting: '[CYCLE]', onPress: () => cycleMenu(1) },
+        // (ikona `rec` — czerwona kropka — jest na liście do dorysowania; do tego czasu klawisz jest tekstowy)
+        { label: 'REC', onPress: onStartRecording },
       ],
       metal: [
         // nic nie gra → BACK świeci (do ekranu nagrywania)
         stopBackKey({ canStop: false, onBack: onStartRecording }),
-        recordKeyList,
         // PLAY otwiera dedykowany odtwarzacz dla zaznaczonego nagrania
         { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: true, onPress: sel ? openPlayer : undefined },
       ],
+      joystick: joyList,
     };
   }
 
-  // Slider jak w Settings: przyciski prev/next przechodzą między nagraniami, knob (discrete) cyklą opcje menu.
+  // Slider na liście = kontrolka ANALOGOWA: knob przewija widok listy płynnie (im dalej wychylony, tym
+  // szybciej), a zaznaczenie zostaje tam, gdzie było — krokowy wybór nagrania należy do joysticka.
+  // Przyciski ⏪⏩ wygaszone (nie mają tu analogowego znaczenia).
   const slider: SliderConfig | undefined =
-    phase === 'LIST'
-      ? { highlighted: true, discrete: true, onPrev: () => moveSel(-1), onNext: () => moveSel(1), onAdjust: (dir) => cycleMenu(dir) }
-      : undefined;
+    phase === 'LIST' ? { highlighted: true, onScrub: flingList, onScrubEnd: flingEnd } : undefined;
 
   const content = (
     <>
@@ -1139,6 +1268,7 @@ export function usePlaybackScreen({
           scrollEventThrottle={16}
           onScroll={(e) => { listOffset.current = e.nativeEvent.contentOffset.y; }}
           onLayout={(e) => { listViewport.current = e.nativeEvent.layout.height; }}
+          onContentSizeChange={(_w, h) => { listContentH.current = h; }}
         >
           {/* DETAILS ma własny scrim (jak INFO) → NIE przyciemniaj listy, inaczej podwójne ciemne tło.
               CONFIRM/DELETED mają pełny panel → dim listy zostaje. */}

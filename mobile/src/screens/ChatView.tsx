@@ -205,21 +205,31 @@ export function useChatView({
             ? { tone: 'phosphor', pulse: false, lines: ['AI CHAT', 'ERROR'] }
             : { tone: 'phosphor', pulse: false, lines: ['AI CHAT', 'ASK ABOUT THIS NOTE'] };
 
-  // metal stały: STOP/BACK · ⏺ (RECORD = nagraj pytanie głosem) · PLAY/PAUSE (wygaszony — brak odtwarzania w czacie).
-  // ⏺ ma własny onPress (startVoice), więc App NIE nadpisze go na „nowe nagranie". startVoice sam się pilnuje (idle-only).
-  const recordAsk = { type: 'record' as const, onPress: startVoice };
+  // metal stały: STOP/BACK · PLAY/PAUSE (wygaszony — brak odtwarzania w czacie). Środek to joystick:
+  // ↑↓ przegląda pary pytanie→odpowiedź, wciśnięcie = zadaj pytanie GŁOSEM (jedyna akcja „nagraj" tego
+  // ekranu, więc grzybek robi się czerwony — a na czerwono świeci mocno dopiero gdy faktycznie słucha).
+  const joyAsk = (listening: boolean) => ({
+    highlighted: true,
+    tone: 'rec' as const,
+    recActive: listening,
+    onUp: () => goPairRef.current(-1),
+    onDown: () => goPairRef.current(1),
+    onPress: startVoice,
+  });
   const playPauseOff = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
   let keyboard: KeyboardConfig;
   if (voice === 'listening') {
     keyboard = {
       screen: [{ label: 'ABORT', supporting: '[TAP]', variant: 'risk', onPress: abortVoice }, { label: '' }, { label: '' }],
       // nagrywa pytanie → STOP świeci (stop+wyślij); inaczej BACK (do playera)
-      metal: [stopBackKey({ canStop: true, onStop: stopAndSend, onBack }), recordAsk, playPauseOff],
+      metal: [stopBackKey({ canStop: true, onStop: stopAndSend, onBack }), playPauseOff],
+      joystick: joyAsk(true),
     };
   } else if (busy) {
     keyboard = {
       screen: [{ label: '' }, { label: '' }, { label: '' }],
-      metal: [stopBackKey({ canStop: false, onBack }), recordAsk, playPauseOff],
+      metal: [stopBackKey({ canStop: false, onBack }), playPauseOff],
+      joystick: joyAsk(false),
     };
   } else {
     // KEYBOARD (otwiera systemową klawiaturę) + 2 presety (SUMMARY / KEY POINTS) — Figma 289:6298.
@@ -228,11 +238,12 @@ export function useChatView({
         { label: 'KEY-\nBOARD', variant: 'primary' as const, onPress: openKeyboard },
         ...PRESETS.slice(0, 2).map((p) => ({ label: p.label, onPress: () => chat.ask(p.q) })),
       ],
-      metal: [stopBackKey({ canStop: false, onBack }), recordAsk, playPauseOff],
+      metal: [stopBackKey({ canStop: false, onBack }), playPauseOff],
+      joystick: joyAsk(false),
     };
   }
 
-  // pary pytanie→odpowiedź; przeglądane prev/next (slider) albo swipem konwersacji. Domyślnie najnowsza.
+  // pary pytanie→odpowiedź; przeglądane joystickiem (↑↓) albo swipem konwersacji. Domyślnie najnowsza.
   const msgs = chat.messages;
   const pairs: { user: ChatTurn; answer: ChatTurn | null }[] = [];
   for (let i = 0; i < msgs.length; i++) {
@@ -262,9 +273,9 @@ export function useChatView({
       },
     })
   ).current;
-  // slider prev/next przegląda pary (gdy jest >1); knob (discrete) tak samo
-  const slider: SliderConfig | undefined =
-    pairsLen > 1 ? { highlighted: true, discrete: true, onPrev: () => goPair(-1), onNext: () => goPair(1), onAdjust: (dir) => goPair(dir) } : undefined;
+  // slider wygaszony: przeglądanie par to nawigacja krokowa → joystick (↑↓) i swipe konwersacji.
+  // W czacie nie ma nic analogowego (żadnej taśmy do przewijania), więc shuttle nie ma tu roli.
+  const slider: SliderConfig | undefined = undefined;
 
   const content = (
     <>

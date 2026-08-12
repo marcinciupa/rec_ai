@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# session scratchpad (temp)
+scratchpad/
+
+# APK delivery counter (tools/deliver-apk.sh)
+tools/.apk-counter

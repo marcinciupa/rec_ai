@@ -1,15 +1,21 @@
 /**
  * ScreenMatrix — nakładka „matryca ekranu" (Figma 121:269, warstwa „matrix"): kafelkowany PNG
  * symulujący siatkę pikseli wyświetlacza. Tekstura ma alfę (ciemne piksele ~10–25% + przezroczyste
- * oczka), więc nakładana zwykłym alpha (bez blendingu) — delikatnie przyciemnia, dając matrycę.
- * Kafel 16px skalowany ×SCALE (Figma scaleMode TILE, scalingFactor 0.25) — repeat na powiększonej warstwie (100/SCALE %)
- * z transformem SCALE daje kafel docelowego rozmiaru, bez sztuczek z gęstością assetu.
- * Renderowana MIĘDZY treścią a połyskiem/glow. Dotyczy ekranów i screen-buttonów; NIE metalowych klawiszy.
+ * oczka), nakładana zwykłym alpha (bez blendingu). Renderowana MIĘDZY treścią a połyskiem/glow.
+ * Dotyczy ekranów i screen-buttonów; NIE metalowych klawiszy.
+ *
+ * WYDAJNOŚĆ (kluczowe — efekt przeniesiony 1:1 z gallery_ai): koszt `resizeMode="repeat"` skaluje się
+ * z POWIERZCHNIĄ warstwy = 100/SCALE %. Kafel docelowy = (natywny PNG px) × SCALE. Przy SCALE=0.25
+ * warstwa miała 400%×400% = 16× ekran → Android re-kafelkował ją przy każdej rekompozycji (scroll
+ * gęstej siatki) = jank. SCALE=0.5 → 200%×200% = 4× ekran (4× taniej). GĘSTOŚĆ kropek jest sprzężona
+ * ze SCALE, a SCALE z powierzchnią — dlatego „2× gęściej" NIE robimy przez zejście SCALE (wróciłby
+ * jank), tylko przez ZMNIEJSZENIE natywnej tekstury: PNG 8×8 (był 16×16, ten sam wzór 2×2 kwadrantów)
+ * + SCALE=0.5 → kafel 4px, powierzchnia repeat bez zmian.
  */
 import { Image, View } from 'react-native';
 
 const MATRIX = require('../../../assets/figma/screen_matrix.png');
-const SCALE = 0.25; // skala kafla matrycy
+const SCALE = 0.5; // PNG 8×8 → kafel 4px; powierzchnia repeat = 200%×200% (4× ekran), jak przy 8px
 
 export function ScreenMatrix({ radius }: { radius?: number }) {
   return (

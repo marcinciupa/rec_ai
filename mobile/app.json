@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "REC_AI",
+    "name": "Rec+",
     "slug": "rec-ai",
-    "version": "0.9665",
+    "version": "0.974",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -12,12 +12,11 @@
     },
     "android": {
       "package": "com.glue010.recai",
-      "versionCode": 9665,
+      "versionCode": 9740,
       "blockedPermissions": ["android.permission.ACTIVITY_RECOGNITION"],
       "adaptiveIcon": {
-        "backgroundColor": "#FF3636",
+        "backgroundColor": "#1A1A1A",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false
@@ -31,7 +30,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Pozwól REC_AI nagrywać dźwięk z mikrofonu.",
+          "microphonePermission": "Pozwól Rec+ nagrywać dźwięk z mikrofonu.",
           "recordAudioAndroid": true,
           "enableBackgroundRecording": false
         }
@@ -40,14 +39,14 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#000000",
+          "backgroundColor": "#1A1A1A",
           "image": "./assets/splash-icon.png",
-          "imageWidth": 180,
+          "imageWidth": 128,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#000000",
+            "backgroundColor": "#1A1A1A",
             "image": "./assets/splash-icon.png",
-            "imageWidth": 180
+            "imageWidth": 128
           }
         }
       ],

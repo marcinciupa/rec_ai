@@ -14,9 +14,15 @@ async def create_transcription(
     audio: UploadFile = File(...),
     recording_id: str = Form(...),
     language: str | None = Form(None),
+    # Silnik wybiera apka (SettingsScreen → AI ENGINE). Przyjmujemy NAZWĘ z zamkniętej listy, nie slug
+    # modelu — inaczej klucz apki pozwalałby zamawiać dowolny model deAPI na nasz rachunek.
+    # Brak pola → "standard", żeby starsze buildy aplikacji działały bez zmian.
+    engine: str = Form("standard"),
     device_id: str = Depends(require_client),
 ) -> TranscriptionResponse:
     settings = request.app.state.settings
+    if engine not in settings.engines:
+        raise HTTPException(status_code=400, detail=f"unknown engine: {engine!r} (allowed: {sorted(settings.engines)})")
     max_bytes = settings.max_upload_mb * 1024 * 1024
     # odrzuć z góry po Content-Length (zanim wczytamy całość do pamięci/dysku)
     clen = request.headers.get("content-length")
@@ -36,6 +42,7 @@ async def create_transcription(
             data=data,
             mime=audio.content_type or "audio/mp4",
             language=language,
+            engine=engine,
         )
     except DeApiError as e:
         raise HTTPException(status_code=502, detail=f"deAPI submit failed: {e}")
@@ -45,7 +52,7 @@ async def create_transcription(
 
     if result is None:
         # Webhook nie dotarł w oknie — klient może ponowić. (Bez fallbacku pollingowego, świadomie.)
-        return TranscriptionResponse(job_id=request_id, status="processing", recording_id=recording_id)
+        return TranscriptionResponse(job_id=request_id, status="processing", recording_id=recording_id, engine=engine)
     if result.get("error"):
         raise HTTPException(status_code=502, detail=f"deAPI transcription failed: {result['error']}")
     return TranscriptionResponse(
@@ -55,4 +62,5 @@ async def create_transcription(
         transcript=result.get("transcript"),
         segments=result.get("segments"),
         language=result.get("language"),
+        engine=engine,
     )

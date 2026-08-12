@@ -9,13 +9,17 @@ import { View } from 'react-native';
 import { dims, gradient } from '../../theme/tokens';
 import { useTheme } from '../../theme/ThemeContext';
 import { Bevel } from './primitives';
-import { MetalLabelKey, RecordKey, ScreenKey, KeyVariant } from './KeyButton';
+import { MetalLabelKey, ScreenKey, KeyVariant } from './KeyButton';
+import { Joystick, JoystickConfig } from './Joystick';
+import type { KeyIconName } from '../icons/keyIcons.gen';
 
 /** Definicja klawisza "screen" (górny rząd). `variant`: default/primary/risk/highRisk. Pusty label = klawisz bez treści. */
 export type ScreenKeyDef = {
   label: string;
   supporting?: string;
   variant?: KeyVariant;
+  /** Jawna ikona (tryb KEY ICONS) — nadpisuje mapę label→ikona. */
+  icon?: KeyIconName;
   onPress?: () => void;
   onLongPress?: () => void;
   onHoldComplete?: () => void;
@@ -23,12 +27,17 @@ export type ScreenKeyDef = {
   holdMs?: number;
   progress?: number; // statyczny pierścień 0..1 (np. bieg prędkości na SPEED)
 };
-/** Definicja klawisza "metal" (dolny rząd): etykietowany albo przycisk record. */
-export type MetalKeyDef =
-  | { type: 'label'; upper: string; lower?: string; active?: boolean; lowerActive?: boolean; onPress?: () => void }
-  | { type: 'record'; onPress?: () => void };
-/** Pełny układ klawiatury dla danego ekranu (3 "screen" + 3 "metal"). */
-export type KeyboardConfig = { screen: ScreenKeyDef[]; metal: MetalKeyDef[] };
+/**
+ * Definicja klawisza "metal" (dolny rząd, KRAWĘDZIE): stałe labele STOP/BACK (lewy) i PLAY/PAUSE (prawy) —
+ * zmienia się wyłącznie podświetlenie. Środek rzędu zajmuje JOYSTICK (osobne pole `joystick` w configu).
+ */
+export type MetalKeyDef = { type: 'label'; upper: string; lower?: string; active?: boolean; lowerActive?: boolean; onPress?: () => void };
+/**
+ * Pełny układ klawiatury dla danego ekranu: 3 klawisze "screen" (górny rząd) + 2 "metal" (krawędzie
+ * dolnego rzędu) + joystick (środek dolnego rzędu). Joystick ma WŁASNE pole — nie jest klawiszem REC,
+ * tylko kontekstową kontrolką nawigacji (patrz Joystick.tsx).
+ */
+export type KeyboardConfig = { screen: ScreenKeyDef[]; metal: MetalKeyDef[]; joystick?: JoystickConfig };
 
 /** Pusty układ — bezpieczny fallback gdy ekran nie poda configu (w praktyce zawsze podaje). */
 const EMPTY_KEYBOARD: KeyboardConfig = { screen: [], metal: [] };
@@ -42,13 +51,12 @@ function Row({ children }: { children: ReactNode }) {
 }
 
 function MetalKey({ def }: { def: MetalKeyDef }) {
-  if (def.type === 'record') return <RecordKey onPress={def.onPress} />;
   return (
     <MetalLabelKey upper={def.upper} lower={def.lower} active={def.active} lowerActive={def.lowerActive} onPress={def.onPress} />
   );
 }
 
-export function Keyboard({ config = EMPTY_KEYBOARD }: { config?: KeyboardConfig }) {
+export function Keyboard({ config = EMPTY_KEYBOARD, keyIcons }: { config?: KeyboardConfig; keyIcons?: boolean }) {
   const t = useTheme();
   return (
     <View
@@ -81,6 +89,8 @@ export function Keyboard({ config = EMPTY_KEYBOARD }: { config?: KeyboardConfig 
               label={k.label}
               supporting={k.supporting}
               variant={k.variant}
+              icons={keyIcons}
+              icon={k.icon}
               onPress={k.onPress}
               onLongPress={k.onLongPress}
               onHoldComplete={k.onHoldComplete}
@@ -90,10 +100,11 @@ export function Keyboard({ config = EMPTY_KEYBOARD }: { config?: KeyboardConfig 
             />
           ))}
         </Row>
+        {/* dolny rząd: metal[0] · JOYSTICK · metal[1] (środek to kontrolka nawigacji, nie klawisz) */}
         <Row>
-          {config.metal.map((k, i) => (
-            <MetalKey key={i} def={k} />
-          ))}
+          {config.metal[0] ? <MetalKey def={config.metal[0]} /> : <View style={{ width: dims.key.size, height: dims.key.size }} />}
+          <Joystick config={config.joystick} />
+          {config.metal[1] ? <MetalKey def={config.metal[1]} /> : <View style={{ width: dims.key.size, height: dims.key.size }} />}
         </Row>
       </Bevel>
     </View>

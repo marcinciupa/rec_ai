@@ -1,10 +1,9 @@
 /**
  * SettingsScreen — ekran ustawień (node 161:12291, device_view).
- * `useSettingsScreen()` zwraca treść (slot Display) ORAZ kontekstową klawiaturę
- * z podpiętą logiką 3 klawiszy "screen":
- *   CHANGE       → zmienia wartość zaznaczonego elementu (cykl opcji, np. ON/OFF, DARK/LIGHT)
- *   BACK  → wraca do ekranu, z którego weszliśmy w ustawienia (onClose)
- *   NEXT [CYCLE] → przesuwa zaznaczenie w dół listy (z ostatniego wraca na pierwszy)
+ * `useSettingsScreen()` zwraca treść (slot Display) ORAZ kontekstową klawiaturę.
+ * Nawigację prowadzi JOYSTICK (↑↓ = wiersz, ←→ = wartość, środek = zatwierdź/zmień) — slider jest tu
+ * wygaszony, a klawisz NEXT [CYCLE] usunięty, żeby ta sama czynność nie miała trzech kontrolek.
+ * Klawisze: CHANGE (kontekstowy — pokazuje wartość, na którą przełączy) · BACK (metal, wyjście).
  */
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import {
@@ -20,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { color, font, screen, textShadow, ThemeName } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
+import type { Engine } from '../lib/types';
 import { APP_VERSION } from '../version';
 
 const SETTINGS_KEY = 'recai.settings.v1'; // trwałość ustawień (AsyncStorage; web=localStorage)
@@ -182,6 +182,11 @@ const INITIAL_SECTIONS: SectionData[] = [
     header: 'PLAYBACK',
     items: [
       { label: 'TRANSCRIPTION', options: ['AUTO', 'MANUAL'], value: 0 },
+      // Silnik transkrypcji. STANDARD = sam tekst; ADVANCED = podział na rozmówców + czas każdego
+      // słowa (widok transkrypcji dostaje kolumnę numerków i karaoke co do słowa). Domyślnie
+      // STANDARD — ADVANCED to nowszy model po stronie deAPI. Dotyczy NOWYCH transkrypcji;
+      // istniejące notatki zostają czym były (RE-TRANSCRIBE w menu notatki przelicza).
+      { label: 'AI ENGINE', options: ['STANDARD', 'ADVANCED'], hints: ['[TEXT]', '[SPEAKERS]'], value: 0 },
       // język pytań i odpowiedzi AI (czat). Domyślnie ENGLISH.
       { label: 'AI LANGUAGE', options: ['ENGLISH', 'POLISH'], value: 0 },
       { label: 'PLAYBACK TIMER', options: ['ELAPSED', 'REMAINING'], value: 0 },
@@ -190,12 +195,14 @@ const INITIAL_SECTIONS: SectionData[] = [
   {
     header: 'OTHER',
     items: [
-      { label: 'THEME', options: ['LIGHT', 'DARK', 'ORANGE', 'NAVY'], value: 0 },
+      { label: 'THEME', options: ['LIGHT', 'DARK', 'ORANGE', 'NAVY'], value: 1 }, // DOMYŚLNIE DARK
       // język interfejsu (osobny od AI LANGUAGE). SYSTEM DEFAULT = język z systemu. INFRA: na main brak
       // jeszcze warstwy tłumaczeń (i18n) → uiLang gotowy, ale UI zostaje EN do czasu nałożenia i18n.
       { label: 'UI LANGUAGE', options: ['SYSTEM DEFAULT', 'ENGLISH', 'POLISH'], value: 0 },
       { label: 'VIEW', options: ['DEVICE', 'FULLSCREEN'], value: 1 }, // domyślnie FULLSCREEN
-      { label: 'MOTION', options: ['OFF', 'ON'], value: 1 },
+      // MOTION (parallax z akcelerometru) ZDJĘTY — symetrycznie z gallery_ai, gdzie tilt jest wyłączony
+      // na stałe (`motion={false}` w App.tsx). Nie ma efektu → nie ma przełącznika.
+      { label: 'KEY ICONS', options: ['OFF', 'ON'], value: 1 }, // DOMYŚLNIE ON
       { label: 'HANDED', options: ['RIGHT', 'LEFT'], value: 0 },
       // wiersz-akcja: otwiera dialog z informacjami o aplikacji (wersja, AI itp.)
       { label: 'INFO', options: ['VIEW'], value: 0, action: true },
@@ -372,37 +379,39 @@ export function useSettingsScreen({
   // inaczej [CYCLE] jako default gdy >2 opcje (np. THEME); 2-opcyjne bez hintu → bez supportu.
   const key1Supporting = selItem && !selItem.action ? (selItem.hints?.[nextIdx] ?? (selItem.options.length > 2 ? '[CYCLE]' : undefined)) : undefined;
 
+  const playOff = { type: 'label' as const, upper: 'PLAY', lower: 'PAUSE', active: false };
   const keyboard: KeyboardConfig = infoOpen
     ? {
-        // nakładka INFO: CLOSE (lub fizyczny BACK) zamyka dialog
+        // nakładka INFO: CLOSE (lub fizyczny BACK) zamyka dialog; joystick bezczynny (nie ruszamy listy pod spodem)
         screen: [{ label: 'CLOSE', variant: 'primary', onPress: closeInfo }, { label: '' }, { label: '' }],
-        metal: [stopBackKey({ canStop: false, onBack: closeInfo }), { type: 'record' }, { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false }],
+        metal: [stopBackKey({ canStop: false, onBack: closeInfo }), playOff],
+        joystick: {},
       }
     : {
         screen: [
           { label: key1Label, supporting: key1Supporting, variant: 'primary', onPress: () => changeBy(1) },
           { label: '' },
-          { label: 'NEXT', supporting: '[CYCLE]', onPress: () => move(1) },
+          // slot po usuniętym NEXT [CYCLE] — pion joysticka robi to samo, klawisz był trzecią kopią tej akcji
+          { label: '' },
         ],
-        metal: [
-          // metal[0] = stały fizyczny STOP/BACK; w ustawieniach STOP zgaszony, BACK świeci (wyjście do poprz. ekranu)
-          stopBackKey({ canStop: false, onBack: onClose }),
-          { type: 'record' },
-          { type: 'label', upper: 'PLAY', lower: 'PAUSE', active: false },
-        ],
+        // metal = stałe labele: STOP/BACK (tu BACK świeci — wyjście do poprzedniego ekranu) i PLAY/PAUSE (zgaszony)
+        metal: [stopBackKey({ canStop: false, onBack: onClose }), playOff],
+        // joystick = JEDYNA nawigacja ustawień: ↑↓ wiersz (przytrzymanie = repeat), ←→ zmiana wartości,
+        // środek = zatwierdź (to samo co klawisz CHANGE, który tę akcję nazywa)
+        joystick: {
+          highlighted: true,
+          repeat: 'vertical',
+          onUp: () => move(-1),
+          onDown: () => move(1),
+          onLeft: () => changeBy(-1),
+          onRight: () => changeBy(1),
+          onPress: () => changeBy(1),
+        },
       };
 
-  // Slider podświetlony i aktywny: prev/next wybierają element listy, knob zmienia parametr.
-  // przy otwartym dialogu INFO slider nieaktywny (nie ruszamy listy pod nakładką)
-  const slider = infoOpen
-    ? { highlighted: false }
-    : {
-        highlighted: true,
-        discrete: true, // ustawienia: knob dyskretny (zmiana o krok przy 10% wychylenia), bez narastania
-        onPrev: () => move(-1),
-        onNext: () => move(1),
-        onAdjust: (dir: -1 | 1) => changeBy(dir),
-      };
+  // Slider wygaszony: w ustawieniach nie ma nic „analogowego" do przewijania, a krokowa nawigacja
+  // należy do joysticka (inaczej ta sama czynność miałaby dwie kontrolki).
+  const slider = undefined;
 
   // stan dolnego paska z bieżących ustawień (RECORD MODE / COMPRESSION) — spójny z resztą ekranów
   const barItems = sections.flatMap((s) => s.items);
@@ -467,8 +476,8 @@ export function useSettingsScreen({
   const fullscreen = viewItem ? viewItem.options[viewItem.value] === 'FULLSCREEN' : false;
   const themeItem = flat.find((it) => it.label === 'THEME');
   const theme = (themeItem ? themeItem.options[themeItem.value] : 'LIGHT') as ThemeName;
-  const motionItem = flat.find((it) => it.label === 'MOTION');
-  const motion = motionItem ? motionItem.options[motionItem.value] === 'ON' : false;
+  const kiItem = flat.find((it) => it.label === 'KEY ICONS');
+  const keyIcons = kiItem ? kiItem.options[kiItem.value] === 'ON' : false;
   const hItem = flat.find((it) => it.label === 'HANDED');
   const leftHanded = hItem ? hItem.options[hItem.value] === 'LEFT' : false;
   const atItem = flat.find((it) => it.label === 'TRANSCRIPTION');
@@ -477,6 +486,8 @@ export function useSettingsScreen({
   const recordMono = rmItem ? rmItem.options[rmItem.value] === 'MONO' : false;
   const compItem = flat.find((it) => it.label === 'QUALITY');
   const recordQuality = (compItem ? compItem.options[compItem.value] : 'HIGH') as 'HIGH' | 'LOW';
+  const engItem = flat.find((it) => it.label === 'AI ENGINE');
+  const engine: Engine = engItem && engItem.options[engItem.value] === 'ADVANCED' ? 'advanced' : 'standard';
   const langItem = flat.find((it) => it.label === 'AI LANGUAGE');
   const language = (langItem ? langItem.options[langItem.value] : 'ENGLISH') === 'POLISH' ? 'pl' : 'en';
   const ptItem = flat.find((it) => it.label === 'PLAYBACK TIMER');
@@ -488,5 +499,5 @@ export function useSettingsScreen({
   const uiLangOpt = uiLangItem ? uiLangItem.options[uiLangItem.value] : 'SYSTEM DEFAULT';
   const uiLang: 'en' | 'pl' = uiLangOpt === 'POLISH' ? 'pl' : uiLangOpt === 'ENGLISH' ? 'en' : systemLang();
 
-  return { content, keyboard, slider, fullscreen, setFullscreen, theme, motion, leftHanded, autoTranscribe, recordMono, recordQuality, language, uiLang, showTimeLeft, keepScreenOn, optionOf, optionsOf, cycleByLabel };
+  return { content, keyboard, slider, fullscreen, setFullscreen, theme, keyIcons, leftHanded, autoTranscribe, recordMono, recordQuality, engine, language, uiLang, showTimeLeft, keepScreenOn, optionOf, optionsOf, cycleByLabel };
 }

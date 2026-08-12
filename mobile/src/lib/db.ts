@@ -7,7 +7,7 @@ import * as SQLite from 'expo-sqlite';
 import type { Rec, Transcript, ChatMessage } from './types';
 
 const DB_NAME = 'recai.db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 // stare nagrania demo (seed z wcześniejszych wersji) — jednorazowo czyszczone w migracji v2
 const DEMO_IDS = ['r1', 'r2', 'r3', 'r4'];
@@ -72,6 +72,14 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
     await db.runAsync(`DELETE FROM transcripts WHERE recording_id IN (${ph})`, ...DEMO_IDS);
     await db.runAsync(`DELETE FROM messages WHERE recording_id IN (${ph})`, ...DEMO_IDS);
     version = 2;
+  }
+  if (version < 3) {
+    // `engine` — czym policzono transkrypt. Bez tego widok nie wie, czy notatka MOŻE mieć rozmówców
+    // (kolumna numerków) i czy karaoke ma iść po słowach. Istniejące wiersze zostają z NULL →
+    // czytane jako `standard`, czyli dokładnie to, czym faktycznie były policzone.
+    // Same segmenty siedzą jako JSON, więc `speaker`/`words` nie wymagają zmiany schematu.
+    await db.execAsync(`ALTER TABLE transcripts ADD COLUMN engine TEXT`);
+    version = 3;
   }
   await db.execAsync(`PRAGMA user_version = ${DB_VERSION}`);
 }
@@ -160,14 +168,15 @@ export async function saveTranscript(t: Transcript): Promise<void> {
   // WHERE EXISTS = atomowa gwarancja: jeśli nagranie zostało usunięte (np. w trakcie transkrypcji),
   // NIE piszemy osieroconego wiersza transkryptu (brak FK/cascade w schemacie). Jeden statement → bez TOCTOU.
   await db.runAsync(
-    `INSERT OR REPLACE INTO transcripts (recording_id, text, segments, language, status, job_id, updated_at)
-     SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM recordings WHERE id = ?)`,
+    `INSERT OR REPLACE INTO transcripts (recording_id, text, segments, language, status, job_id, engine, updated_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM recordings WHERE id = ?)`,
     t.recordingId,
     t.text ?? null,
     t.segments ? JSON.stringify(t.segments) : null,
     t.language ?? null,
     t.status,
     t.jobId ?? null,
+    t.engine ?? null,
     Date.now(),
     t.recordingId
   );
@@ -182,6 +191,7 @@ export async function getTranscript(recordingId: string): Promise<Transcript | n
     language: string | null;
     status: string;
     job_id: string | null;
+    engine: string | null;
   }>('SELECT * FROM transcripts WHERE recording_id = ?', recordingId);
   if (!r) return null;
   let segments: Transcript['segments'] = null;
@@ -198,6 +208,8 @@ export async function getTranscript(recordingId: string): Promise<Transcript | n
     language: r.language,
     status: r.status as Transcript['status'],
     jobId: r.job_id,
+    // NULL = wiersz sprzed migracji v3, czyli policzony starym silnikiem
+    engine: (r.engine as Transcript['engine']) ?? 'standard',
   };
 }
 
