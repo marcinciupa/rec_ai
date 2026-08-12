@@ -97,6 +97,7 @@ export default function App() {
     mono: settings.recordMono,
     quality: settings.recordQuality,
     language: settings.language,
+    engine: settings.engine,
     showTimeLeft: settings.showTimeLeft,
     onTyping: setChatTyping,
     mode,

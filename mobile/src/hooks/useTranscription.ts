@@ -7,7 +7,7 @@
  * Lifted w App.tsx i współdzielony przez RecordingScreen (AUTO TRANSCRIBE) i PlaybackScreen (przycisk TRANS-CRIBE).
  */
 import { useEffect, useRef, useState } from 'react';
-import type { Rec } from '../lib/types';
+import type { Rec, Engine } from '../lib/types';
 import type { RecordingsStore } from './useRecordings';
 import * as api from '../lib/api';
 import * as db from '../lib/db';
@@ -133,7 +133,7 @@ export function useTranscription(store: RecordingsStore) {
     timers.current[id] = setTimeout(() => setOne(id, null), ms);
   };
 
-  const start = (rec: Rec, opts?: { language?: string }) => {
+  const start = (rec: Rec, opts?: { language?: string; engine?: Engine }) => {
     if (!rec.uri) return; // brak pliku (demo / web) → nie ma czego transkrybować
     const cur = statesRef.current[rec.id];
     if (cur && (cur.status === 'uploading' || cur.status === 'processing')) return; // już trwa
@@ -147,11 +147,12 @@ export function useTranscription(store: RecordingsStore) {
       language: opts?.language ?? null,
       status: 'processing',
       jobId: null,
+      engine: opts?.engine ?? 'standard',
     }).catch(() => {});
 
     (async () => {
       try {
-        const res = await api.transcribe({ uri: rec.uri!, recordingId: rec.id, language: opts?.language });
+        const res = await api.transcribe({ uri: rec.uri!, recordingId: rec.id, language: opts?.language, engine: opts?.engine });
         clearTimer(rec.id);
         if (res.status === 'completed') {
           const text = (res.transcript ?? '').trim();
@@ -163,6 +164,8 @@ export function useTranscription(store: RecordingsStore) {
               language: res.language ?? null,
               status: 'completed',
               jobId: res.job_id,
+              // z odpowiedzi backendu — to on rozstrzyga, czym faktycznie policzył
+              engine: res.engine ?? opts?.engine ?? 'standard',
             })
             .catch(() => {});
           // tytuł tymczasowy od razu (pierwsze słowa / „(NO SPEECH)"), żeby nie blokować momentu „done"
@@ -230,7 +233,11 @@ export function useTranscription(store: RecordingsStore) {
         const ids = await db.getResumableTranscriptions();
         for (const id of ids) {
           const rec = store.recordings.find((r) => r.id === id);
-          if (rec?.uri && !rec.transcribed) start(rec);
+          if (!rec?.uri || rec.transcribed) continue;
+          // wznawiaj TYM SAMYM silnikiem, którym zaczęliśmy — inaczej notatka zaczęta jako
+          // `advanced` dokończyłaby się starym modelem (bez rozmówców) po restarcie apki
+          const prev = await db.getTranscript(id).catch(() => null);
+          start(rec, { language: prev?.language ?? undefined, engine: prev?.engine ?? undefined });
         }
       } catch {}
     })();

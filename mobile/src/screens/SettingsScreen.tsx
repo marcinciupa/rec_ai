@@ -19,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { color, font, screen, textShadow, ThemeName } from '../theme/tokens';
 import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
+import type { Engine } from '../lib/types';
 import { APP_VERSION } from '../version';
 
 const SETTINGS_KEY = 'recai.settings.v1'; // trwałość ustawień (AsyncStorage; web=localStorage)
@@ -181,6 +182,11 @@ const INITIAL_SECTIONS: SectionData[] = [
     header: 'PLAYBACK',
     items: [
       { label: 'TRANSCRIPTION', options: ['AUTO', 'MANUAL'], value: 0 },
+      // Silnik transkrypcji. STANDARD = sam tekst; ADVANCED = podział na rozmówców + czas każdego
+      // słowa (widok transkrypcji dostaje kolumnę numerków i karaoke co do słowa). Domyślnie
+      // STANDARD — ADVANCED to nowszy model po stronie deAPI. Dotyczy NOWYCH transkrypcji;
+      // istniejące notatki zostają czym były (RE-TRANSCRIBE w menu notatki przelicza).
+      { label: 'AI ENGINE', options: ['STANDARD', 'ADVANCED'], hints: ['[TEXT]', '[SPEAKERS]'], value: 0 },
       // język pytań i odpowiedzi AI (czat). Domyślnie ENGLISH.
       { label: 'AI LANGUAGE', options: ['ENGLISH', 'POLISH'], value: 0 },
       { label: 'PLAYBACK TIMER', options: ['ELAPSED', 'REMAINING'], value: 0 },
@@ -480,6 +486,8 @@ export function useSettingsScreen({
   const recordMono = rmItem ? rmItem.options[rmItem.value] === 'MONO' : false;
   const compItem = flat.find((it) => it.label === 'QUALITY');
   const recordQuality = (compItem ? compItem.options[compItem.value] : 'HIGH') as 'HIGH' | 'LOW';
+  const engItem = flat.find((it) => it.label === 'AI ENGINE');
+  const engine: Engine = engItem && engItem.options[engItem.value] === 'ADVANCED' ? 'advanced' : 'standard';
   const langItem = flat.find((it) => it.label === 'AI LANGUAGE');
   const language = (langItem ? langItem.options[langItem.value] : 'ENGLISH') === 'POLISH' ? 'pl' : 'en';
   const ptItem = flat.find((it) => it.label === 'PLAYBACK TIMER');
@@ -491,5 +499,5 @@ export function useSettingsScreen({
   const uiLangOpt = uiLangItem ? uiLangItem.options[uiLangItem.value] : 'SYSTEM DEFAULT';
   const uiLang: 'en' | 'pl' = uiLangOpt === 'POLISH' ? 'pl' : uiLangOpt === 'ENGLISH' ? 'en' : systemLang();
 
-  return { content, keyboard, slider, fullscreen, setFullscreen, theme, keyIcons, leftHanded, autoTranscribe, recordMono, recordQuality, language, uiLang, showTimeLeft, keepScreenOn, optionOf, optionsOf, cycleByLabel };
+  return { content, keyboard, slider, fullscreen, setFullscreen, theme, keyIcons, leftHanded, autoTranscribe, recordMono, recordQuality, engine, language, uiLang, showTimeLeft, keepScreenOn, optionOf, optionsOf, cycleByLabel };
 }

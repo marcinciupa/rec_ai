@@ -20,7 +20,9 @@ export class ApiError extends Error {
   }
 }
 
-export type Segment = { start: number | null; end: number | null; text: string };
+// Segment/Word mieszkają w types.ts — jedna definicja dla API, bazy i widoku (import typu, bez runtime).
+export type { Segment, Word } from './types';
+import type { Segment, Engine } from './types';
 
 // Kontrakt /api/v1/transcriptions (backend: schemas.TranscriptionResponse)
 export type TranscriptionResult = {
@@ -30,6 +32,7 @@ export type TranscriptionResult = {
   transcript?: string | null;
   segments?: Segment[] | null;
   language?: string | null;
+  engine?: Engine | null;
 };
 
 // Kontrakt /api/v1/chat (backend: schemas.ChatResponse / ChatRequest)
@@ -90,11 +93,14 @@ export async function transcribe(opts: {
   mimeType?: string;
   fileName?: string;
   language?: string;
+  engine?: Engine;
 }): Promise<TranscriptionResult> {
   const deviceId = await getDeviceId();
   const url = `${BASE}/api/v1/transcriptions`;
   const fields: Record<string, string> = { recording_id: opts.recordingId };
   if (opts.language) fields.language = opts.language;
+  // Nazwa silnika, nie slug modelu — backend waliduje wobec zamkniętej listy (nieznana → 400).
+  if (opts.engine) fields.engine = opts.engine;
   const headers = { 'X-Device-Id': deviceId, Accept: 'application/json', ...appKeyHeader };
 
   // Upload natywnym uploaderem (expo/fetch + File-Blob); legacy {uri,name,type} nie działa na New Arch.

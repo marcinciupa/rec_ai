@@ -11,8 +11,9 @@ import { View, Text, Pressable, ScrollView } from 'react-native';
 import { usePlayer } from '../hooks/usePlayer';
 import { hapticKnob, hapticContinuous } from '../lib/haptics';
 import { getTranscript } from '../lib/db';
+import { speakerNumbers, spokenCutFromWords } from '../lib/transcript';
 import { shareRecording } from '../lib/share';
-import type { Transcript } from '../lib/types';
+import type { Transcript, Word, Engine } from '../lib/types';
 import { color, font, screen } from '../theme/tokens';
 import type { KeyboardConfig, ScreenKeyDef } from '../components/chrome/Keyboard';
 import type { KeyIconName } from '../components/icons/keyIcons.gen';
@@ -131,12 +132,14 @@ function PlayWaveform({ ratio, dim, samples }: { ratio: number; dim?: boolean; s
   );
 }
 
-// Pojedynczy segment transkryptu w playerze (Figma 288:3568): kolumna timestampów [start/koniec]
-// + tekst Mono/Body. Tekst (karaoke) wg pozycji: odtworzony = jasny; bieżący = wypowiedziana część
-// jasna, reszta przyciemniona; nadchodzący = cały przyciemniony. Timestampy NIEZALEŻNIE od karaoke:
-// cała para rozjaśnia się z chwilą rozpoczęcia sekcji (posSec ≥ startN); bieżąca sekcja = glow (kursor).
-// Tap w kolumnę timestampów → seek do startu sekcji + odtwarzanie (onSeek).
-function TranscriptRow({ startN, endN, endLabel, text, posSec, onSeek }: { startN: number; endN: number; endLabel: string; text: string; posSec: number; onSeek?: (sec: number) => void }) {
+// Pojedynczy segment transkryptu w playerze (Figma 288:3568, wariant z rozmówcami 682:5200):
+// kolumna [kafel rozmówcy / timestamp start / timestamp koniec] + tekst Mono/Body.
+// Tekst (karaoke) wg pozycji: odtworzony = jasny; bieżący = wypowiedziana część jasna, reszta
+// przyciemniona; nadchodzący = cały przyciemniony. Podział bieżącego liczony CO DO SŁOWA, gdy
+// segment ma `words`; inaczej proporcjonalnie po znakach (stare zachowanie).
+// Timestampy i kafel NIEZALEŻNIE od karaoke: rozjaśniają się z chwilą rozpoczęcia sekcji
+// (posSec ≥ startN); bieżąca sekcja = glow (kursor). Tap → seek do startu sekcji + odtwarzanie.
+function TranscriptRow({ startN, endN, endLabel, text, words, speaker, posSec, onSeek }: { startN: number; endN: number; endLabel: string; text: string; words?: Word[] | null; speaker?: string | null; posSec: number; onSeek?: (sec: number) => void }) {
   const bright = screen.olive.primary;
   const dim = screen.olive.secondary;
   const played = posSec >= endN; // segment w całości za nami
@@ -147,9 +150,11 @@ function TranscriptRow({ startN, endN, endLabel, text, posSec, onSeek }: { start
   let bodyNode: ReactNode;
   if (played) {
     bodyNode = <Text style={{ color: bright }}>{text}</Text>;
-  } else if (current && isFinite(endN) && endN > startN) {
+  } else if (current && (spokenCutFromWords(text, words, posSec) != null || (isFinite(endN) && endN > startN))) {
+    // słowa (advanced) → dokładny podział; brak słów → przybliżenie proporcjonalne po znakach
+    const byWords = spokenCutFromWords(text, words, posSec);
     const frac = Math.max(0, Math.min(1, (posSec - startN) / (endN - startN)));
-    const cut = Math.round(text.length * frac);
+    const cut = byWords ?? Math.round(text.length * frac);
     bodyNode = (
       <>
         <Text style={{ color: bright }}>{text.slice(0, cut)}</Text>
@@ -169,6 +174,22 @@ function TranscriptRow({ startN, endN, endLabel, text, posSec, onSeek }: { start
   return (
     <View style={{ flexDirection: 'row', alignSelf: 'stretch', alignItems: 'flex-start', gap: 8 }}>
       <Pressable onPress={seek} hitSlop={8}>
+        {/* Kafel rozmówcy (Figma 682:5200). Rozciąga się na szerokość kolumny, którą wyznaczają
+            timestampy pod spodem („0:00" = 4 znaki) — dlatego mieści też 3-znakowy skrót imienia
+            bez zmiany layoutu. Zapalony, gdy sekcja się zaczęła; inaczej przygaszony jak czasy. */}
+        {speaker ? (
+          <View
+            style={{
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 2,
+              backgroundColor: started ? bright : dim,
+              ...(started ? ({ boxShadow: '0px 0px 4px 0px rgba(226,255,228,0.25)' } as any) : null),
+            }}
+          >
+            <Text style={{ ...cap, color: color.dark21 }}>{speaker}</Text>
+          </View>
+        ) : null}
         <Text style={{ ...cap, color: started ? bright : dim, ...(current ? glow('rgba(226,255,228,0.25)') : null) }}>{fmtShort(startN)}</Text>
         <Text style={{ ...cap, color: started ? bright : dim, marginTop: -2 }}>{endLabel}</Text>
       </Pressable>
@@ -188,13 +209,27 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
   const sizes = useRef({ content: 0, view: 0 });
   const hasSegs = !!(segs && segs.length);
 
+  // Kolumnę rozmówców pokazujemy DOPIERO od dwóch osób. Przy jednym mówcy (dyktowanie, notatka
+  // głosowa, stary silnik bez diaryzacji) numerek przy każdym wierszu nic nie wnosi, a zabiera
+  // szerokość tekstowi — więc go chowamy.
+  const speakers = hasSegs ? speakerNumbers(segs!) : new Map<string, number>();
+  const showSpeakers = speakers.size >= 2;
+
   // granice czasowe segmentów (koniec = własny end → start następnego → ∞ dla ostatniego)
   const rows = hasSegs
     ? segs!.map((s, i) => {
         const startN = s.start ?? 0;
         const nextStart = segs![i + 1]?.start ?? null;
         const endN = s.end ?? nextStart ?? Infinity;
-        return { startN, endN, endLabel: s.end != null || nextStart != null ? fmtShort(s.end ?? nextStart!) : '', text: s.text.trim() };
+        const no = s.speaker ? speakers.get(s.speaker) : undefined;
+        return {
+          startN,
+          endN,
+          endLabel: s.end != null || nextStart != null ? fmtShort(s.end ?? nextStart!) : '',
+          text: s.text.trim(),
+          words: s.words ?? null,
+          speaker: showSpeakers && no != null ? String(no) : null,
+        };
       })
     : [];
   // indeks bieżącego segmentu (do auto-scrolla); poza zakresem → pierwszy/ostatni
@@ -228,7 +263,9 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
       showsVerticalScrollIndicator={false}
     >
       {hasSegs ? (
-        rows.map((r, i) => <TranscriptRow key={i} startN={r.startN} endN={r.endN} endLabel={r.endLabel} text={r.text} posSec={posSec} onSeek={onSeek} />)
+        rows.map((r, i) => (
+          <TranscriptRow key={i} startN={r.startN} endN={r.endN} endLabel={r.endLabel} text={r.text} words={r.words} speaker={r.speaker} posSec={posSec} onSeek={onSeek} />
+        ))
       ) : (
         <Text style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, lineHeight: Math.round(font.monoBody.size * 1.5) }}>
           <Text style={{ color: screen.olive.primary }}>{text.slice(0, at)}</Text>
@@ -386,6 +423,7 @@ export function usePlaybackScreen({
   onOpenSettings,
   onStartRecording,
   transcription,
+  engine,
   pendingPlayId,
   onConsumePending,
   recordingsRequest = 0,
@@ -402,6 +440,7 @@ export function usePlaybackScreen({
   onOpenSettings?: () => void;
   onStartRecording?: () => void;
   transcription?: TranscriptionStore;
+  engine?: Engine; // silnik transkrypcji z Settings (AI ENGINE) — dotyczy NOWYCH zleceń
   // żądanie z ekranu nagrywania: otwórz PLAYER dla tego nagrania i od razu graj (autostart)
   pendingPlayId?: string | null;
   onConsumePending?: () => void;
@@ -799,7 +838,16 @@ export function usePlaybackScreen({
   // ── TRANS-CRIBE: realna transkrypcja przez manager (upload → backend). Wymaga pliku (uri). ──
   const transcribe = () => {
     if (!sel || sel.transcribed || !sel.uri) return; // demo bez pliku → nie ma czego transkrybować
-    transcription?.start(sel);
+    transcription?.start(sel, { engine });
+  };
+
+  // ── RE-TRANS-CRIBE: przelicz notatkę JESZCZE RAZ bieżącym silnikiem (AI ENGINE w Settings).
+  // Sens: notatka policzona przed przełączeniem na ADVANCED nie ma rozmówców ani czasów słów —
+  // bez tej akcji nowy widok byłby widoczny wyłącznie dla nagrań zrobionych po zmianie ustawienia.
+  // Nadpisuje poprzedni transkrypt (i tytuł od AI). Wymaga pliku — notatki demo odpadają.
+  const retranscribe = () => {
+    if (!sel?.uri) return;
+    transcription?.start(sel, { engine });
   };
 
   // statusbar AI zaznaczonego nagrania (wspólny deriver): job (UPLOADING/PROCESSING/DONE)
@@ -1116,6 +1164,7 @@ export function usePlaybackScreen({
     ? [
         ...(sel.uri && !sel.transcribed ? [{ label: 'TRANSCRIBE', run: transcribe }] : []),
         ...(sel.uri && sel.transcribed ? [{ label: 'ASK AI', run: () => { haltPlayer(); setView('CHAT'); } }] : []),
+        ...(sel.uri && sel.transcribed ? [{ label: 'RE-TRANSCRIBE', run: retranscribe, keyLabel: 'RE-TRANS-\nCRIBE' }] : []),
         ...(sel.uri ? [{ label: 'SHARE', run: () => { shareRecording(sel.uri, displayName(sel, recs)); } }] : []),
         { label: 'DETAILS', run: () => setPhase('DETAILS'), keyLabel: 'SHOW DETAILS' },
         // DELETE (Figma 288:3942): czerwona opcja inline + klawisz High Risk z pełną mechaniką:
