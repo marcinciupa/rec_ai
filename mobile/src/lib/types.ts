@@ -45,6 +45,9 @@ export type Transcript = {
   jobId: string | null;
   // Czym policzone. Notatki sprzed wprowadzenia silników mają null → traktujemy jak `standard`.
   engine?: Engine | null;
+  // Imiona rozmówców rozpoznane przez AI z treści: { "SPEAKER_00": "Marc" }. Tylko gdy imię
+  // NAPRAWDĘ padło w nagraniu; nierozpoznani są nieobecni w mapie i zostają przy numerze.
+  speakerNames?: Record<string, string> | null;
 };
 
 // Wiadomość czatu o notatce (Faza 3).

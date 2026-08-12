@@ -12,6 +12,7 @@ import { usePlayer } from '../hooks/usePlayer';
 import { hapticKnob, hapticContinuous } from '../lib/haptics';
 import { getTranscript } from '../lib/db';
 import { speakerNumbers, spokenCutFromWords } from '../lib/transcript';
+import { speakerLabels } from '../lib/speakerLabel';
 import { useStorageLabel } from '../hooks/useStorage';
 import { shareRecording } from '../lib/share';
 import type { Transcript, Word, Engine } from '../lib/types';
@@ -215,6 +216,10 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
   // szerokość tekstowi — więc go chowamy.
   const speakers = hasSegs ? speakerNumbers(segs!) : new Map<string, number>();
   const showSpeakers = speakers.size >= 2;
+  // Etykieta kafla: 3-znakowy skrót imienia tam, gdzie AI rozpoznało je PEWNIE („Marc" → MRC),
+  // numer wg kolejności wejścia w pozostałych. Mieszanka („MRC", „2", „TBT") jest w porządku —
+  // lepsza niż zmyślone imię dla kogoś, kogo model nie rozpoznał.
+  const labels = speakerLabels(speakers, transcript.speakerNames);
 
   // granice czasowe segmentów (koniec = własny end → start następnego → ∞ dla ostatniego)
   const rows = hasSegs
@@ -222,14 +227,14 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
         const startN = s.start ?? 0;
         const nextStart = segs![i + 1]?.start ?? null;
         const endN = s.end ?? nextStart ?? Infinity;
-        const no = s.speaker ? speakers.get(s.speaker) : undefined;
+        const label = s.speaker ? labels.get(s.speaker) : undefined;
         return {
           startN,
           endN,
           endLabel: s.end != null || nextStart != null ? fmtShort(s.end ?? nextStart!) : '',
           text: s.text.trim(),
           words: s.words ?? null,
-          speaker: showSpeakers && no != null ? String(no) : null,
+          speaker: showSpeakers && label ? label : null,
         };
       })
     : [];

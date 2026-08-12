@@ -7,7 +7,8 @@
  * Lifted w App.tsx i współdzielony przez RecordingScreen (AUTO TRANSCRIBE) i PlaybackScreen (przycisk TRANS-CRIBE).
  */
 import { useEffect, useRef, useState } from 'react';
-import type { Rec, Engine } from '../lib/types';
+import type { Rec, Engine, Segment } from '../lib/types';
+import { isUsableName } from '../lib/speakerLabel';
 import type { RecordingsStore } from './useRecordings';
 import * as api from '../lib/api';
 import * as db from '../lib/db';
@@ -91,6 +92,67 @@ async function generateTitle(text: string): Promise<string> {
   }
 }
 
+/** Transkrypt z etykietami mówców, sklejony do promptu. Sąsiadujące segmenty tej samej osoby
+ *  łączymy w jedną kwestię — model dostaje dialog, a nie posiekane linijki. */
+function taggedDialogue(segments: Segment[], maxChars = 12000): string {
+  const lines: string[] = [];
+  for (const s of segments) {
+    const who = s.speaker ?? 'UNKNOWN';
+    const text = s.text.trim();
+    if (!text) continue;
+    const prev = lines[lines.length - 1];
+    if (prev && prev.startsWith(`${who}:`)) lines[lines.length - 1] = `${prev} ${text}`;
+    else lines.push(`${who}: ${text}`);
+  }
+  const out = lines.join('\n');
+  return out.length > maxChars ? out.slice(0, maxChars) : out;
+}
+
+/** Wyłuskaj obiekt JSON z odpowiedzi modelu — bywa opakowany w ```json ... ``` albo w zdanie. */
+function extractJsonObject(raw: string): Record<string, unknown> | null {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const body = (fenced ? fenced[1] : raw).trim();
+  const start = body.indexOf('{');
+  const end = body.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    const o = JSON.parse(body.slice(start, end + 1));
+    return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Kto jest kim: mapa „SPEAKER_00" → imię, WYŁĄCZNIE gdy imię pada w nagraniu i da się je pewnie
+ * przypisać. Świadomie restrykcyjne — błędne imię jest gorsze niż numer, bo brzmi wiarygodnie
+ * i czytelnik uwierzy, że dana osoba coś powiedziała. Zwraca null, gdy nic pewnego nie ustalono.
+ * Odsiew wymówek modelu („nieznany", „Speaker 2") robi isUsableName w lib/speakerLabel.
+ */
+async function identifySpeakers(segments: Segment[]): Promise<Record<string, string> | null> {
+  const ids = [...new Set(segments.map((s) => s.speaker).filter(Boolean))] as string[];
+  if (ids.length < 2) return null; // jedna osoba → nie ma czego rozpoznawać
+  try {
+    const res = await api.chat({
+      transcript: taggedDialogue(segments),
+      question:
+        'To zapis rozmowy z etykietami mówców. Dla każdej etykiety podaj IMIĘ tej osoby, ale TYLKO jeśli ' +
+        'pada ono w rozmowie i jednoznacznie wskazuje właśnie tego mówcę (np. ktoś się przedstawia albo ' +
+        'jest do niego imiennie zwrócony). Jeśli masz jakąkolwiek wątpliwość — wpisz null. NIE ZGADUJ, ' +
+        'nie wymyślaj imion i nie przypisuj imienia osobie tylko dlatego, że padło w rozmowie. ' +
+        'Zachowaj oryginalną pisownię i znaki diakrytyczne. Zwróć WYŁĄCZNIE obiekt JSON w postaci ' +
+        `{"SPEAKER_00": "Imię", "SPEAKER_01": null}, obejmujący dokładnie te etykiety: ${ids.join(', ')}.`,
+    });
+    const obj = extractJsonObject(res.answer);
+    if (!obj) return null;
+    const out: Record<string, string> = {};
+    for (const id of ids) if (isUsableName(obj[id])) out[id] = String(obj[id]).trim();
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null; // rozpoznanie imion to dodatek — jego brak nie może zepsuć transkrypcji
+  }
+}
+
 export function useTranscription(store: RecordingsStore) {
   const [states, setStates] = useState<Record<string, TransUiState>>({});
   const statesRef = useRef(states);
@@ -168,6 +230,27 @@ export function useTranscription(store: RecordingsStore) {
               engine: res.engine ?? opts?.engine ?? 'standard',
             })
             .catch(() => {});
+          // Imiona rozmówców — w tle, po zapisaniu transkryptu. Osobne wywołanie (nie doklejone do
+          // tytułu), żeby nieudane sparsowanie JSON-a nie zabrało przy okazji tytułu. Odpala się
+          // tylko dla ≥2 mówców, więc dyktowanie nie generuje żadnego dodatkowego zapytania.
+          const segs = res.segments ?? null;
+          if (segs && segs.some((s) => s.speaker)) {
+            identifySpeakers(segs)
+              .then((names) => {
+                if (!names) return;
+                return db.saveTranscript({
+                  recordingId: rec.id,
+                  text: res.transcript ?? null,
+                  segments: segs,
+                  language: res.language ?? null,
+                  status: 'completed',
+                  jobId: res.job_id,
+                  engine: res.engine ?? opts?.engine ?? 'standard',
+                  speakerNames: names,
+                });
+              })
+              .catch(() => {});
+          }
           // tytuł tymczasowy od razu (pierwsze słowa / „(NO SPEECH)"), żeby nie blokować momentu „done"
           store.update(rec.id, { transcribed: true, title: text ? deriveTitle(text) : '(NO SPEECH)' });
           setOne(rec.id, { status: 'done', pct: 100 });
