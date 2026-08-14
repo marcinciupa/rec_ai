@@ -187,6 +187,16 @@ const INITIAL_SECTIONS: SectionData[] = [
       // STANDARD — ADVANCED to nowszy model po stronie deAPI. Dotyczy NOWYCH transkrypcji;
       // istniejące notatki zostają czym były (RE-TRANSCRIBE w menu notatki przelicza).
       { label: 'AI ENGINE', options: ['STANDARD', 'ADVANCED'], hints: ['[TEXT]', '[SPEAKERS]'], value: 0 },
+      // Ratunek, gdy rozdzielanie głosów po stronie deAPI zawiedzie i cała rozmowa wróci jako jedna
+      // osoba: AI ustala tury z TREŚCI (pytanie→odpowiedź, zwrot do rozmówcy). Domyślnie ON, bo
+      // dziś diaryzacja zawodzi częściej niż działa; OFF = pokazujemy wyłącznie to, co usłyszał deAPI.
+      // Dotyczy tylko silnika ADVANCED (potrzebne czasy słów) i tylko nagrań z jednym wykrytym mówcą.
+      { label: 'AI SPEAKERS', options: ['OFF', 'ON'], hints: ['[DEAPI]', '[+AI]'], value: 1 },
+      // Gdzie kończy się wiersz transkryptu. ON = granice wyznacza SENS (AI grupuje w akapity);
+      // OFF = tylko podział mechaniczny z czasów słów i interpunkcji. Uwaga: OFF nie oznacza
+      // wiersza-molocha — mechanika działa zawsze, bo nie jest zgadywaniem; AI tylko przenosi
+      // granice tam, gdzie naprawdę kończy się myśl.
+      { label: 'AI PARAGRAPHS', options: ['OFF', 'ON'], hints: ['[BY TIME]', '[BY SENSE]'], value: 1 },
       // język pytań i odpowiedzi AI (czat). Domyślnie ENGLISH.
       { label: 'AI LANGUAGE', options: ['ENGLISH', 'POLISH'], value: 0 },
       { label: 'PLAYBACK TIMER', options: ['ELAPSED', 'REMAINING'], value: 0 },
@@ -498,6 +508,10 @@ export function useSettingsScreen({
   const recordQuality = (compItem ? compItem.options[compItem.value] : 'HIGH') as 'HIGH' | 'LOW';
   const engItem = flat.find((it) => it.label === 'AI ENGINE');
   const engine: Engine = engItem && engItem.options[engItem.value] === 'ADVANCED' ? 'advanced' : 'standard';
+  const spkItem = flat.find((it) => it.label === 'AI SPEAKERS');
+  const aiSpeakers = spkItem ? spkItem.options[spkItem.value] === 'ON' : false;
+  const parItem = flat.find((it) => it.label === 'AI PARAGRAPHS');
+  const aiParagraphs = parItem ? parItem.options[parItem.value] === 'ON' : false;
   const langItem = flat.find((it) => it.label === 'AI LANGUAGE');
   const language = (langItem ? langItem.options[langItem.value] : 'ENGLISH') === 'POLISH' ? 'pl' : 'en';
   const ptItem = flat.find((it) => it.label === 'PLAYBACK TIMER');
@@ -509,5 +523,5 @@ export function useSettingsScreen({
   const uiLangOpt = uiLangItem ? uiLangItem.options[uiLangItem.value] : 'SYSTEM DEFAULT';
   const uiLang: 'en' | 'pl' = uiLangOpt === 'POLISH' ? 'pl' : uiLangOpt === 'ENGLISH' ? 'en' : systemLang();
 
-  return { content, keyboard, slider, fullscreen, setFullscreen, theme, keyIcons, leftHanded, autoTranscribe, recordMono, recordQuality, engine, language, uiLang, showTimeLeft, keepScreenOn, optionOf, optionsOf, cycleByLabel };
+  return { content, keyboard, slider, fullscreen, setFullscreen, theme, keyIcons, leftHanded, autoTranscribe, recordMono, recordQuality, engine, aiSpeakers, aiParagraphs, language, uiLang, showTimeLeft, keepScreenOn, optionOf, optionsOf, cycleByLabel };
 }

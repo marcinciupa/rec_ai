@@ -11,6 +11,7 @@ import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 import { useAudioCapture } from '../hooks/useAudioCapture';
 import type { Rec } from '../hooks/useRecordings';
+import type { Engine } from '../lib/types';
 import { genericName, nextSeq } from '../hooks/useRecordings';
 import { deriveAiStatus, type TranscriptionStore } from '../hooks/useTranscription';
 import { persistRecording } from '../lib/recordingFiles';
@@ -121,6 +122,8 @@ function PausedBanner() {
 
 export function useRecordingScreen({
   aiEnabled,
+  language,
+  engine,
   mono = false,
   quality = 'HIGH',
   mode = 'RECORDING',
@@ -133,6 +136,10 @@ export function useRecordingScreen({
   transcription,
 }: {
   aiEnabled: boolean;
+  // AUTO TRANSCRIBE musi zlecać TYM SAMYM silnikiem i językiem co ręczne TRANS-CRIBE w playerze —
+  // inaczej ustawienie ADVANCED nie działa dla nagrań transkrybowanych automatycznie (a to domyślna ścieżka).
+  language?: string;
+  engine?: Engine;
   mono?: boolean;
   quality?: 'HIGH' | 'LOW'; // COMPRESSION → bitrate nagrywania (HIGH [BIG] / LOW [SMALL])
   mode?: Mode;
@@ -291,7 +298,7 @@ export function useRecordingScreen({
     setLastSavedId(id);
     onSave?.(rec);
     // AUTO TRANSCRIBE: od razu realna transkrypcja (tylko gdy mamy plik — natywnie)
-    if (aiEnabled && uri) transcription?.start(rec);
+    if (aiEnabled && uri) transcription?.start(rec, { language, engine });
   };
   const stop = () => {
     setAbortedFlash(false);

@@ -9,6 +9,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Rec, Engine, Segment } from '../lib/types';
 import { isUsableName } from '../lib/speakerLabel';
+import { buildChunks, chunkPrompt, MAX_PROMPT_CHARS } from '../lib/transcriptRows';
+import { applySpeakerTurns, needsSpeakerSplit } from '../lib/speakerSplit';
+import { buildBlocks, normalizeStarts, needsBlockSplit } from '../lib/segmentSplit';
 import type { RecordingsStore } from './useRecordings';
 import * as api from '../lib/api';
 import * as db from '../lib/db';
@@ -153,7 +156,97 @@ async function identifySpeakers(segments: Segment[]): Promise<Record<string, str
   }
 }
 
-export function useTranscription(store: RecordingsStore) {
+/**
+ * Kto mówi — ustalone z TREŚCI, gdy diaryzacja akustyczna deAPI zwróci jednego mówcę mimo rozmowy
+ * kilku osób (realny objaw: nagranie z trzema osobami, wszystkie słowa z jednym `SPEAKER_00`).
+ *
+ * Model NIE DOTYKA TEKSTU: dostaje ponumerowane fragmenty wycięte przez nas na granicach słów
+ * i oddaje wyłącznie numer mówcy dla każdego. Dzięki temu każdy kawałek zachowuje PRAWDZIWY czas
+ * ze słów — inaczej rozjechałby się seek i karaoke, na których stoi cały widok transkrypcji.
+ * Szczegóły cięcia i składania: lib/speakerSplit. Zwraca null (błąd, monolog, notatka za długa
+ * na jedno wywołanie) → zostaje stan sprzed próby.
+ */
+async function inferSpeakerTurns(segments: Segment[]): Promise<Segment[] | null> {
+  const chunks = buildChunks(segments);
+  if (chunks.length < 2) return null;
+  const body = chunkPrompt(chunks);
+  if (body.length > MAX_PROMPT_CHARS) return null;
+  try {
+    const res = await api.chat({
+      transcript: body,
+      // Prompt dobrany POMIAREM na żywo (4 przebiegi przez /chat, na kształcie danych z produkcji):
+      //  • bez reguły „pytanie→odpowiedź to dwie osoby" model gubił nawet oczywiste granice tur;
+      //  • bez reguły minimalności rozmnażał mówców (4 tam, gdzie mówiły 3 osoby);
+      //  • bez zakazu naprzemienności przeplatał mówców co drugi fragment.
+      // Pole `count` jest w odpowiedzi celowo — zmusza model, żeby zadeklarował liczbę osób, zanim
+      // zacznie przypisywać (z nim liczba mówców przestała skakać); my go nie czytamy.
+      // Przypisanie bywa mimo to niedoskonałe — dlatego to ustawienie do wyłączenia, nie domyślna prawda.
+      question:
+        'To zapis nagrania podzielony na ponumerowane fragmenty. Automatyczne rozdzielenie głosów ' +
+        'zawiodło — ustal WYŁĄCZNIE Z TREŚCI, kto mówi w którym fragmencie.\n' +
+        'Reguły:\n' +
+        '• pytanie skierowane do kogoś i następująca po nim odpowiedź to ZAWSZE dwie różne osoby;\n' +
+        '• zwrócenie się do kogoś po imieniu oznacza, że mówi KTOŚ INNY niż ta osoba, a odpowiedź należy do niej;\n' +
+        '• NIE zakładaj naprzemienności — kilka fragmentów pod rząd od tej samej osoby to normalne; zmieniaj ' +
+        'mówcę tylko tam, gdzie treść naprawdę na to wskazuje;\n' +
+        '• użyj NAJMNIEJSZEJ liczby mówców, jaka tłumaczy tę rozmowę — te same osoby wracają, więc zanim ' +
+        'wprowadzisz nowego mówcę, sprawdź, czy fragment nie należy do kogoś, kto już mówił;\n' +
+        '• monolog jednej osoby to POPRAWNA odpowiedź (same jedynki) — nie dziel na siłę.\n' +
+        'Nie zwracaj tekstu, nie scalaj ani nie dziel fragmentów. Mówców numeruj od 1, wg kolejności ' +
+        'pojawienia się. Zwróć WYŁĄCZNIE JSON: {"count": ile osób mówi, "speakers": [1, 1, 2, …]} — ' +
+        `w "speakers" dokładnie ${chunks.length} liczb, po jednej na fragment, w kolejności numerów.`,
+    });
+    const arr = extractJsonObject(res.answer)?.speakers;
+    if (!Array.isArray(arr)) return null;
+    return applySpeakerTurns(segments, chunks, arr.map(Number));
+  } catch {
+    return null; // rozmówcy to dodatek — ich brak nie może zepsuć transkrypcji
+  }
+}
+
+/**
+ * Podział długiego segmentu na czytelne wiersze — GRANICE WYZNACZA KONTEKST, nie długość.
+ * Model dostaje te same ponumerowane fragmenty co przy rozmówcach i oddaje wyłącznie numery
+ * fragmentów, od których zaczyna się nowa myśl. Zwraca null (odmowa, śmieci, notatka za długa
+ * na jedno pytanie) → wołający spada na podział mechaniczny, a nie na brak podziału.
+ */
+async function inferBlocks(segments: Segment[]): Promise<Segment[] | null> {
+  const chunks = buildChunks(segments);
+  if (chunks.length < 2) return null;
+  const body = chunkPrompt(chunks);
+  if (body.length > MAX_PROMPT_CHARS) return null;
+  try {
+    const res = await api.chat({
+      transcript: body,
+      question:
+        'To zapis nagrania podzielony na ponumerowane fragmenty. Pogrupuj je w AKAPITY — bloki jednej ' +
+        'myśli albo jednego wątku, tak żeby dało się to czytać.\n' +
+        'Reguły:\n' +
+        '• nowy akapit zaczynaj tam, gdzie zmienia się temat, wątek albo perspektywa;\n' +
+        '• akapit to zwykle 2–6 fragmentów — NIE rób akapitu z każdego zdania, to daje sieczkę;\n' +
+        '• kieruj się sensem, a nie długością — akapit może być dłuższy, jeśli to jedna myśl;\n' +
+        '• nie zwracaj tekstu, nie scalaj ani nie dziel fragmentów.\n' +
+        `Zwróć WYŁĄCZNIE JSON: {"starts": [1, 5, 12]} — numery fragmentów rozpoczynających akapity, ` +
+        `rosnąco, z zakresu 1–${chunks.length}.`,
+    });
+    const starts = normalizeStarts(extractJsonObject(res.answer)?.starts, chunks.length);
+    if (!starts) return null;
+    return buildBlocks(segments, chunks, { starts });
+  } catch {
+    return null;
+  }
+}
+
+/** @param opts.aiSpeakers Settings → AI SPEAKERS: pozwolenie na ustalanie rozmówców z treści,
+ *  gdy diaryzacja deAPI zawiodła. Czytane w chwili transkrypcji (ref), więc zmiana w ustawieniach
+ *  działa od razu, także dla wznowionych zleceń. */
+export function useTranscription(store: RecordingsStore, settings?: { aiSpeakers?: boolean; aiParagraphs?: boolean }) {
+  const aiSpeakersRef = useRef(!!settings?.aiSpeakers);
+  aiSpeakersRef.current = !!settings?.aiSpeakers;
+  // AI PARAGRAPHS dotyczy tylko granic KONTEKSTOWYCH; podział mechaniczny działa zawsze, bo nie jest
+  // zgadywaniem — wynika wprost z czasów słów i interpunkcji deAPI.
+  const aiParagraphsRef = useRef(!!settings?.aiParagraphs);
+  aiParagraphsRef.current = !!settings?.aiParagraphs;
   const [states, setStates] = useState<Record<string, TransUiState>>({});
   const statesRef = useRef(states);
   statesRef.current = states;
@@ -230,26 +323,52 @@ export function useTranscription(store: RecordingsStore) {
               engine: res.engine ?? opts?.engine ?? 'standard',
             })
             .catch(() => {});
-          // Imiona rozmówców — w tle, po zapisaniu transkryptu. Osobne wywołanie (nie doklejone do
-          // tytułu), żeby nieudane sparsowanie JSON-a nie zabrało przy okazji tytułu. Odpala się
-          // tylko dla ≥2 mówców, więc dyktowanie nie generuje żadnego dodatkowego zapytania.
+          // Rozmówcy — w tle, po zapisaniu transkryptu. Osobne wywołania (nie doklejone do promptu
+          // o tytuł), żeby nieudane sparsowanie JSON-a nie zabrało przy okazji tytułu.
           const segs = res.segments ?? null;
-          if (segs && segs.some((s) => s.speaker)) {
-            identifySpeakers(segs)
-              .then((names) => {
-                if (!names) return;
-                return db.saveTranscript({
-                  recordingId: rec.id,
-                  text: res.transcript ?? null,
-                  segments: segs,
-                  language: res.language ?? null,
-                  status: 'completed',
-                  jobId: res.job_id,
-                  engine: res.engine ?? opts?.engine ?? 'standard',
-                  speakerNames: names,
-                });
-              })
-              .catch(() => {});
+          if (segs?.length) {
+            (async () => {
+              const save = (extra: { segments: Segment[]; speakerNames?: Record<string, string> }) =>
+                db
+                  .saveTranscript({
+                    recordingId: rec.id,
+                    text: res.transcript ?? null,
+                    language: res.language ?? null,
+                    status: 'completed',
+                    jobId: res.job_id,
+                    engine: res.engine ?? opts?.engine ?? 'standard',
+                    ...extra,
+                  })
+                  .catch(() => {});
+              let working = segs;
+              // 1. diaryzacja deAPI zawiodła (jeden mówca na całym nagraniu) → spróbuj z treści.
+              //    Gdy rozdzieliła poprawnie albo brak zgody w ustawieniach — pomijamy, więc
+              //    dyktowanie nie generuje ani jednego dodatkowego zapytania.
+              if (aiSpeakersRef.current && needsSpeakerSplit(working)) {
+                const split = await inferSpeakerTurns(working);
+                if (split) {
+                  working = split;
+                  await save({ segments: working });
+                }
+              }
+              // 2. czytelne wiersze. KOLEJNOŚĆ WAŻNOŚCI: kontekst > długość. Najpierw pytamy model,
+              //    gdzie kończy się myśl; dopiero gdy odmówi (brak zgody w ustawieniach, awaria,
+              //    brak sieci, notatka za długa na jedno pytanie) wchodzi podział mechaniczny —
+              //    gorszy, ale wciąż czytelny i policzony wyłącznie z danych deAPI.
+              if (needsBlockSplit(working)) {
+                const byContext = aiParagraphsRef.current ? await inferBlocks(working) : null;
+                const rows = byContext ?? buildBlocks(working, buildChunks(working), {});
+                if (rows) {
+                  working = rows;
+                  await save({ segments: working });
+                }
+              }
+              // 3. imiona — na WYNIKU kroków 1–2, żeby pracowały na tym samym podziale, który widzi user
+              if (working.some((s) => s.speaker)) {
+                const names = await identifySpeakers(working);
+                if (names) await save({ segments: working, speakerNames: names });
+              }
+            })().catch(() => {});
           }
           // tytuł tymczasowy od razu (pierwsze słowa / „(NO SPEECH)"), żeby nie blokować momentu „done"
           store.update(rec.id, { transcribed: true, title: text ? deriveTitle(text) : '(NO SPEECH)' });

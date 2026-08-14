@@ -71,13 +71,16 @@ export default function App() {
 
   // Wspólny store nagrań — dzielony przez nagrywanie (zapis) i playback (lista).
   const recStore = useRecordings();
-  // Manager realnej transkrypcji (upload → backend deAPI), dzielony przez oba ekrany.
-  const transcription = useTranscription(recStore);
 
   // Oba hooki zawsze zamontowane (reguły hooków + zachowanie stanu między trybami).
+  // Settings PRZED transkrypcją: manager czyta z nich zgodę na ustalanie rozmówców przez AI.
   const settings = useSettingsScreen({ onClose: closeSettings, mode, onCycleMode: cycleMode });
+  // Manager realnej transkrypcji (upload → backend deAPI), dzielony przez oba ekrany.
+  const transcription = useTranscription(recStore, { aiSpeakers: settings.aiSpeakers, aiParagraphs: settings.aiParagraphs });
   const recording = useRecordingScreen({
     aiEnabled: settings.autoTranscribe,
+    language: settings.language,
+    engine: settings.engine,
     mono: settings.recordMono,
     quality: settings.recordQuality,
     mode,
