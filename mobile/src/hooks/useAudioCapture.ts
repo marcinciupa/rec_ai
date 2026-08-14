@@ -16,7 +16,8 @@ import {
   requestRecordingPermissionsAsync,
 } from 'expo-audio';
 import { File } from 'expo-file-system';
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createLevelScaler } from '../lib/level';
 
 const REAL = Platform.OS !== 'web';
 
@@ -32,20 +33,32 @@ const REC_OPTIONS: any = {
   ios: { outputFormat: 'aac ', audioQuality: 0x7f, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
 };
 
-// dBFS (~-55..0) → 0..1
-// metering dBFS → 0..1 z „punchem": wyższy próg szumu (cisza ≈ 0) + gain, żeby wychylenia były AGRESYWNE
-// (mowa dobija do maksa, cisza zostaje niska — wyraźnie widać że nagrywa). Wpływa na waveform nagrywania,
-// miernik dolnego paska i zapisaną obwiednię (spójnie).
-const normLevel = (db: number | null | undefined) => {
-  if (typeof db !== 'number' || !isFinite(db)) return null;
-  const base = Math.max(0, Math.min(1, (db + 50) / 50)); // -50 dBFS → 0, 0 dBFS → 1 (próg szumu podniesiony z -55)
-  return Math.max(0, Math.min(1, base * 1.7)); // gain 1.7 → mowa szybciej dobija do pełnej wysokości słupka
-};
+// Poziom do waveformu liczy ADAPTACYJNY skaler (lib/level.ts), a nie sztywna formuła dB→0..1.
+// Poprzednia — min(1, ((dB+50)/50) * 1.7) — nasycała się przy ~-20 dBFS, a normalna mowa siedzi
+// w -20…-6, więc waveform miał praktycznie dwa stany: sufit albo cisza. Skaler wyznacza kroczący
+// floor/ceiling z ostatnich ~4 s i wypełnia proporcjonalnie między nimi.
+// Wynik zasila waveform nagrywania, miernik dolnego paska i zapisaną obwiednię (spójnie).
+const TICK_MS = 90; // równy rytm próbkowania = rytm waveformu; skaler MUSI dostawać próbki miarowo
 
 export function useAudioCapture() {
   const recorder = useAudioRecorder(REC_OPTIONS);
   const state = useAudioRecorderState(recorder);
-  const level = normLevel(state?.metering);
+  // Skaler jest STANOWY (okno kroczące), więc karmimy go z własnego, równego interwału — a nie przy
+  // każdym renderze, bo te lecą nierówno i próbki byłyby raz gęściej, raz rzadziej.
+  const scaler = useRef(createLevelScaler());
+  const meteringRef = useRef<number | null | undefined>(state?.metering);
+  meteringRef.current = state?.metering;
+  const [level, setLevel] = useState<number | null>(null);
+  const recording = !!state?.isRecording;
+  useEffect(() => {
+    if (!recording) {
+      scaler.current.reset(); // nowe nagranie startuje z czystą skalą, nie z poprzedniego
+      setLevel(null);
+      return;
+    }
+    const id = setInterval(() => setLevel(scaler.current.push(meteringRef.current)), TICK_MS);
+    return () => clearInterval(id);
+  }, [recording]);
   // PEŁNE opcje nagrania (RECORD MODE/COMPRESSION). MUSI być PEŁNY obiekt (REC_OPTIONS + nadpisania), bo
   // prepareToRecordAsync(Partial) gubił format/extension → plik w złym formacie i transkrypcja nie działała.
   const fmtRef = useRef<any>(REC_OPTIONS);
