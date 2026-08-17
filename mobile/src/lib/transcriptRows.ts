@@ -37,6 +37,7 @@ export type Chunk = {
   end: number | null;
   text: string;
   words: Word[];
+  speaker: string | null; // mówca WG SŁÓW (deAPI etykietuje każde słowo osobno), nie wg segmentu
 };
 
 type Placed = { w: Word; at: number; to: number };
@@ -68,6 +69,57 @@ export function placeWords(text: string, words: Word[] | null | undefined): Plac
 
 const SENTENCE_END = /[.!?…]["'”’)]?$/;
 
+/**
+ * Przyciągnij zmianę mówcy do granicy zdania — poprawka na SPÓŹNIENIE diaryzacji.
+ *
+ * Diaryzacja potrzebuje kawałka audio, żeby rozpoznać, że mówi już kto inny. Gdy rozmówcy wchodzą
+ * sobie w słowo (bez pauzy), etykieta przełącza się dopiero po 1–3 słowach nowej wypowiedzi.
+ * Zmierzone na realnym nagraniu: z 8 zmian mówcy aż 3 wypadły DOKŁADNIE 2 słowa za późno — np.
+ * „Na swojej spotkaniu. No bo | jeszcze jest tak", gdzie „No bo" należy już do drugiej osoby.
+ *
+ * Interpunkcja Whispera jest w tych miejscach poprawna, więc jeśli w promieniu `maxShift` słów od
+ * zmiany jest koniec zdania, przesuwamy ją tam. Okno jest wąskie celowo: korygujemy spóźnienie
+ * o kilka słów, a nie przenosimy granicy w inne miejsce rozmowy. Zmiany bez końca zdania w pobliżu
+ * (wejście w słowo w środku zdania) zostają tam, gdzie były.
+ */
+export function snapSpeakersToSentences(segments: Segment[], maxShift = 3, maxSec = 1.5): Segment[] {
+  const flat: { w: Word; seg: number; i: number }[] = [];
+  segments.forEach((s, si) => (s.words ?? []).forEach((w, i) => flat.push({ w, seg: si, i })));
+  if (flat.length < 2) return segments;
+
+  const speakers = flat.map((f) => f.w.speaker ?? null);
+  const endsSentence = (k: number) => SENTENCE_END.test((flat[k].w.word ?? '').trim());
+  const next = [...speakers];
+  let moved = false;
+
+  for (let k = 1; k < flat.length; k++) {
+    if (speakers[k] === speakers[k - 1]) continue;
+    // najbliższa pozycja, PRZED którą kończy się zdanie (czyli słowo k-1 ma kropkę)
+    let best: number | null = null;
+    for (let j = Math.max(1, k - maxShift); j <= Math.min(flat.length - 1, k + maxShift); j++) {
+      if (!endsSentence(j - 1)) continue;
+      const dt = Math.abs((flat[j].w.start ?? 0) - (flat[k].w.start ?? 0));
+      if (dt > maxSec) continue;
+      if (best === null || Math.abs(j - k) < Math.abs(best - k)) best = j;
+    }
+    if (best === null || best === k) continue;
+    // przepisz etykiety słów między starą a nową granicą (tylko one się zmieniają)
+    const [from, to] = best < k ? [best, k] : [k, best];
+    const label = best < k ? speakers[k] : speakers[k - 1];
+    for (let j = from; j < to; j++) next[j] = label;
+    moved = true;
+  }
+  if (!moved) return segments;
+
+  let p = 0;
+  return segments.map((s) => {
+    const ws = s.words ?? null;
+    if (!ws) return s;
+    const out = ws.map((w) => ({ ...w, speaker: next[p++] }));
+    return { ...s, words: out };
+  });
+}
+
 /** Fragmenty-kandydaci: cięcie na końcu zdania, na pauzie i po `maxWords`. Segment bez użytecznych
  *  słów zostaje jednym fragmentem — da się go oznaczyć w całości, ale nie da się go rozciąć. */
 export function buildChunks(segments: Segment[], opts: Partial<typeof CHUNK_DEFAULTS> = {}): Chunk[] {
@@ -79,7 +131,7 @@ export function buildChunks(segments: Segment[], opts: Partial<typeof CHUNK_DEFA
     if (!text.trim()) return;
     const placed = placeWords(text, seg.words);
     if (!placed || placed.length < 2) {
-      out.push({ seg: si, from: 0, to: text.length, start: seg.start, end: seg.end, text, words: seg.words ?? [] });
+      out.push({ seg: si, from: 0, to: text.length, start: seg.start, end: seg.end, text, words: seg.words ?? [], speaker: seg.speaker ?? null });
       return;
     }
     let from = 0;
@@ -89,7 +141,11 @@ export function buildChunks(segments: Segment[], opts: Partial<typeof CHUNK_DEFA
       const isLast = k === placed.length - 1;
       const next = placed[k + 1];
       const gap = !isLast && placed[k].w.end != null && next.w.start != null ? next.w.start! - placed[k].w.end! : 0;
-      if (!isLast && !SENTENCE_END.test(placed[k].w.word.trim()) && gap < gapSec && acc.length < maxWords) continue;
+      // ZMIANA MÓWCY MIĘDZY SŁOWAMI łamie fragment zawsze i bez negocjacji. deAPI etykietuje każde
+      // słowo osobno, a `segment.speaker` to tylko etykieta zbiorcza — na realnym nagraniu 4 z 8
+      // segmentów miały zmianę mówcy W ŚRODKU, przez co 16% słów szło na konto niewłaściwej osoby.
+      const turn = !isLast && (placed[k].w.speaker ?? null) !== (next.w.speaker ?? null);
+      if (!isLast && !turn && !SENTENCE_END.test(placed[k].w.word.trim()) && gap < gapSec && acc.length < maxWords) continue;
       // ostatni fragment sięga końca tekstu — suma fragmentów MUSI dać dokładnie oryginał
       const to = isLast ? text.length : placed[k].to;
       out.push({
@@ -100,6 +156,7 @@ export function buildChunks(segments: Segment[], opts: Partial<typeof CHUNK_DEFA
         end: placed[k].w.end,
         text: text.slice(from, to),
         words: acc.map((p) => p.w),
+        speaker: acc[0].w.speaker ?? seg.speaker ?? null,
       });
       from = to;
       acc = [];
@@ -123,7 +180,9 @@ function capChunks(chunks: Chunk[], maxChunks: number): Chunk[] {
   let run = 0;
   for (const c of chunks) {
     const prev = out[out.length - 1];
-    if (prev && prev.seg === c.seg && run < f) {
+    // NIE scalamy przez granicę mówcy — inaczej sufit fragmentów po cichu przywracałby błąd,
+    // który cały ten podział naprawia (dwie osoby w jednym wierszu).
+    if (prev && prev.seg === c.seg && prev.speaker === c.speaker && run < f) {
       out[out.length - 1] = join(prev, c);
       run++;
     } else {
@@ -138,6 +197,36 @@ function capChunks(chunks: Chunk[], maxChunks: number): Chunk[] {
  *  a wiersz na fragment jest jednoznaczny przy parsowaniu odpowiedzi. */
 export function chunkPrompt(chunks: Chunk[]): string {
   return chunks.map((c, i) => `${i + 1}. ${c.text.replace(/\s+/g, ' ').trim()}`).join('\n');
+}
+
+/** Do porównywania cytatów: same litery i cyfry, małymi, bez interpunkcji i podwójnych spacji. */
+function norm(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+/**
+ * Znajdź fragment, od którego naprawdę zaczyna się nowa tura/akapit.
+ *
+ * Model podaje NUMER fragmentu i krótki CYTAT jego początku. Numer bywa przesunięty o jeden (model
+ * przelicza pozycje w tablicy i łatwo się myli), cytat — nie, bo pochodzi wprost z tekstu, który
+ * dostał. Dlatego numer traktujemy jako podpowiedź, a rozstrzyga cytat: sprawdzamy podpowiedziany
+ * fragment, a potem jego sąsiadów w promieniu `window`. Gdy cytatu nie ma (albo nie pasuje nigdzie
+ * w pobliżu), zostaje sam numer.
+ */
+export function matchAnchor(chunks: Chunk[], hint: number, quote?: string | null, window = 3): number | null {
+  const inRange = Number.isInteger(hint) && hint >= 0 && hint < chunks.length;
+  const q = norm(quote ?? '');
+  if (!q) return inRange ? hint : null;
+  const fits = (i: number) => i >= 0 && i < chunks.length && norm(chunks[i].text).startsWith(q.slice(0, 40));
+  if (inRange && fits(hint)) return hint;
+  for (let d = 1; d <= window; d++) {
+    if (fits(hint - d)) return hint - d;
+    if (fits(hint + d)) return hint + d;
+  }
+  return inRange ? hint : null;
 }
 
 /**

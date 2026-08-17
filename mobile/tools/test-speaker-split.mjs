@@ -8,8 +8,9 @@
  * Najważniejsze, czego pilnują: suma fragmentów = DOKŁADNIE oryginalny tekst, a każdy fragment
  * niesie prawdziwy czas ze słów. Gdyby to puściło, seek i karaoke pokazywałyby nie to miejsce.
  */
-import { buildChunks, chunkPrompt, placeWords } from '/tmp/rec_ai_test/transcriptRows.js';
-import { needsSpeakerSplit, applySpeakerTurns, speakerId } from '/tmp/rec_ai_test/speakerSplit.js';
+import { buildChunks, chunkPrompt, placeWords, snapSpeakersToSentences } from '/tmp/rec_ai_test/transcriptRows.js';
+import { needsSpeakerSplit, applySpeakerTurns, speakerId, turnsToSpeakers, splitByWordSpeakers } from '/tmp/rec_ai_test/speakerSplit.js';
+import { matchAnchor } from '/tmp/rec_ai_test/transcriptRows.js';
 
 let pass = 0;
 let fail = 0;
@@ -97,6 +98,118 @@ eq('jeden mówca + słowa → tak', needsSpeakerSplit([DIALOG]), true);
 eq('diaryzacja rozdzieliła (≥2) → nie poprawiamy jej', needsSpeakerSplit([DIALOG, { ...DIALOG, speaker: 'SPEAKER_01' }]), false);
 eq('brak słów → nie (nie ma prawdziwych czasów cięcia)', needsSpeakerSplit([noWords]), false);
 eq('brak segmentów → nie', needsSpeakerSplit(null), false);
+
+console.log('snapSpeakersToSentences — korekta SPÓŹNIENIA diaryzacji');
+// PRZYPADEK Z REALNEGO NAGRANIA (zgłoszony przez użytkownika): druga osoba wchodzi bez pauzy,
+// więc deAPI przełącza etykietę dopiero po dwóch jej słowach („No bo").
+const late = (spk) => (w, i) => ({ word: w, start: 123.0 + i * 0.2, end: 123.15 + i * 0.2, speaker: spk[i] });
+const LATE_WORDS = ['Na', 'swojej', 'spotkaniu.', 'No', 'bo', 'jeszcze', 'jest', 'tak,'].map(
+  late(['SPEAKER_01', 'SPEAKER_01', 'SPEAKER_01', 'SPEAKER_01', 'SPEAKER_01', 'SPEAKER_00', 'SPEAKER_00', 'SPEAKER_00'])
+);
+const LATE = { start: 123.0, end: 124.6, text: 'Na swojej spotkaniu. No bo jeszcze jest tak,', speaker: 'SPEAKER_01', words: LATE_WORDS };
+const fixed = snapSpeakersToSentences([LATE])[0];
+eq(
+  'granica przesunięta na koniec zdania — „No bo" wraca do drugiej osoby',
+  fixed.words.map((w) => w.speaker.slice(-2)),
+  ['01', '01', '01', '00', '00', '00', '00', '00']
+);
+ok('tekst segmentu nietknięty', fixed.text === LATE.text);
+ok('słowa i czasy nietknięte', fixed.words.map((w) => `${w.word}@${w.start}`).join('|') === LATE_WORDS.map((w) => `${w.word}@${w.start}`).join('|'));
+const rowsLate = splitByWordSpeakers([fixed], buildChunks([fixed]));
+eq('po korekcie wiersze łamią się we właściwym miejscu', rowsLate.map((r) => r.text.trim()), ['Na swojej spotkaniu.', 'No bo jeszcze jest tak,']);
+
+// zmiana w ŚRODKU zdania (realne wejście w słowo) — nie ma czego przyciągać, zostaje jak było
+const MID_WORDS = ['ale', 'oni', 'zagrają', 'z', 'Legacy,', 'jeżeli', 'ktoś'].map(
+  late(['SPEAKER_01', 'SPEAKER_01', 'SPEAKER_01', 'SPEAKER_01', 'SPEAKER_00', 'SPEAKER_00', 'SPEAKER_00'])
+);
+const MID = { start: 123.0, end: 124.4, text: 'ale oni zagrają z Legacy, jeżeli ktoś', speaker: 'SPEAKER_01', words: MID_WORDS };
+eq('brak końca zdania w oknie → etykiety bez zmian', snapSpeakersToSentences([MID])[0].words.map((w) => w.speaker), MID_WORDS.map((w) => w.speaker));
+
+// koniec zdania DALEJ niż okno → też bez zmian (korygujemy spóźnienie, nie przenosimy granic)
+const FAR_WORDS = ['koniec.', 'raz', 'dwa', 'trzy', 'cztery', 'pięć', 'sześć'].map(
+  late(['SPEAKER_01', 'SPEAKER_01', 'SPEAKER_01', 'SPEAKER_01', 'SPEAKER_01', 'SPEAKER_00', 'SPEAKER_00'])
+);
+const FAR = { start: 123.0, end: 124.4, text: 'koniec. raz dwa trzy cztery pięć sześć', speaker: 'SPEAKER_01', words: FAR_WORDS };
+eq('koniec zdania poza oknem → bez zmian', snapSpeakersToSentences([FAR])[0].words.map((w) => w.speaker), FAR_WORDS.map((w) => w.speaker));
+eq('segmenty bez słów przechodzą bez zmian', snapSpeakersToSentences([{ start: 0, end: 1, text: 'x', words: null }])[0].words, null);
+
+console.log('splitByWordSpeakers — cięcie tam, gdzie deAPI zmienia mówcę PRZY SŁOWIE');
+// Kształt z realnego nagrania: segment ma JEDNĄ etykietę zbiorczą, a słowa w środku należą do dwóch osób.
+const mixWords = [
+  { word: 'Pewnie', start: 51.1, end: 51.5, speaker: 'SPEAKER_00' },
+  { word: 'faworyt', start: 51.6, end: 52.0, speaker: 'SPEAKER_00' },
+  { word: 'jest.', start: 52.1, end: 52.6, speaker: 'SPEAKER_00' },
+  { word: 'A', start: 59.8, end: 59.9, speaker: 'SPEAKER_01' },
+  { word: 'jeżeli', start: 60.0, end: 60.4, speaker: 'SPEAKER_01' },
+  { word: 'drużyna', start: 60.5, end: 61.0, speaker: 'SPEAKER_01' },
+];
+const MIX = { start: 51.1, end: 61.0, text: 'Pewnie faworyt jest. A jeżeli drużyna', speaker: 'SPEAKER_01', words: mixWords };
+const mixRows = splitByWordSpeakers([MIX], buildChunks([MIX]));
+eq('segment rozcięty na dwa wiersze', mixRows.length, 2);
+eq('etykiety wg SŁÓW, nie wg etykiety zbiorczej segmentu', mixRows.map((r) => r.speaker), ['SPEAKER_00', 'SPEAKER_01']);
+eq('granica dokładnie tam, gdzie zaczyna druga osoba', mixRows[1].start, 59.8);
+eq('teksty', mixRows.map((r) => r.text.trim()), ['Pewnie faworyt jest.', 'A jeżeli drużyna']);
+ok('tekst 1:1', mixRows.map((r) => r.text).join('') === MIX.text);
+ok('żaden wiersz nie miesza mówców', mixRows.every((r) => new Set(r.words.map((w) => w.speaker)).size === 1));
+eq('żadne słowo nie zginęło', mixRows.reduce((n, r) => n + r.words.length, 0), mixWords.length);
+// zero roboty tam, gdzie etykiety słów zgadzają się z segmentem
+const clean = { ...MIX, text: 'Pewnie faworyt jest.', words: mixWords.slice(0, 3), speaker: 'SPEAKER_00', end: 52.6 };
+eq('spójny segment → null (nic do poprawiania)', splitByWordSpeakers([clean], buildChunks([clean])), null);
+const noSpk = { start: 0, end: 3, text: 'Bez etykiet w słowach.', speaker: null, words: [{ word: 'Bez', start: 0, end: 0.4 }, { word: 'etykiet', start: 0.5, end: 1.0 }, { word: 'w', start: 1.1, end: 1.2 }, { word: 'słowach.', start: 1.3, end: 2.0 }] };
+eq('słowa bez etykiet → null', splitByWordSpeakers([noSpk], buildChunks([noSpk])), null);
+// sufit fragmentów NIE MOŻE scalać przez granicę mówcy — inaczej po cichu wraca naprawiany błąd
+const capped = buildChunks([MIX], { maxChunks: 1 });
+ok('scalanie do sufitu nie łączy różnych mówców', capped.every((c) => new Set(c.words.map((w) => w.speaker)).size === 1), JSON.stringify(capped.map((c) => c.speaker)));
+
+console.log('turnsToSpeakers — tury z cytatem zamiast tablicy N liczb');
+// realny kształt rozmowy: 4 fragmenty, zmiana mówcy przy trzecim
+const DIAL4 = seg([
+  ['Cześć,', 0.5, 0.9], ['jak', 1.0, 1.2], ['leci?', 1.2, 1.6],
+  ['Wszystko', 2.4, 2.9], ['dobrze.', 3.0, 3.6],
+  ['A', 4.6, 4.8], ['u', 4.9, 5.0], ['ciebie?', 5.1, 5.6],
+]);
+const c4 = buildChunks([DIAL4]);
+eq('fragmentów', c4.length, 3);
+eq(
+  'poprawne tury → mówca na każdy fragment',
+  turnsToSpeakers(c4, [{ from: 1, quote: 'Cześć jak leci', speaker: 1 }, { from: 2, quote: 'Wszystko dobrze', speaker: 2 }]),
+  [1, 2, 2]
+);
+// ⬇ OBJAW ZGŁOSZONY PRZEZ UŻYTKOWNIKA: model wskazuje granicę o jeden fragment za wcześnie,
+//   ale cytat wskazuje właściwe miejsce → korygujemy numer, granica ląduje tam, gdzie trzeba.
+eq(
+  'numer o jeden za mały, cytat prawidłowy → granica skorygowana',
+  turnsToSpeakers(c4, [{ from: 1, quote: 'Cześć jak leci', speaker: 1 }, { from: 1, quote: 'Wszystko dobrze', speaker: 2 }]),
+  [1, 2, 2]
+);
+eq(
+  'numer o jeden za duży, cytat prawidłowy → też skorygowany',
+  turnsToSpeakers(c4, [{ from: 1, quote: 'Cześć jak leci', speaker: 1 }, { from: 3, quote: 'Wszystko dobrze', speaker: 2 }]),
+  [1, 2, 2]
+);
+eq(
+  'cytat z inną interpunkcją i wielkością liter nadal trafia',
+  turnsToSpeakers(c4, [{ from: 1, quote: 'cześć, JAK', speaker: 1 }, { from: 1, quote: '  wszystko, dobrze!  ', speaker: 2 }]),
+  [1, 2, 2]
+);
+eq(
+  'bez cytatu zostaje sam numer (podpowiedź modelu)',
+  turnsToSpeakers(c4, [{ from: 1, speaker: 1 }, { from: 3, speaker: 2 }]),
+  [1, 1, 2]
+);
+eq('brak tur → null', turnsToSpeakers(c4, []), null);
+eq('nie-tablica → null', turnsToSpeakers(c4, { from: 1 }), null);
+eq('same śmieci → null', turnsToSpeakers(c4, [{ from: 'x', speaker: null }, 42, 'nope']), null);
+eq('jedna tura = monolog → null (nie ruszamy segmentów)', turnsToSpeakers(c4, [{ from: 1, speaker: 1 }]), null);
+eq('absurdalny numer mówcy pomijany → zostaje monolog → null', turnsToSpeakers(c4, [{ from: 1, speaker: 1 }, { from: 2, speaker: 99 }]), null);
+eq('tury podane w złej kolejności są sortowane', turnsToSpeakers(c4, [{ from: 3, speaker: 2 }, { from: 1, speaker: 1 }]), [1, 1, 2]);
+
+console.log('matchAnchor — cytat rozstrzyga, numer jest podpowiedzią');
+eq('trafiony numer + zgodny cytat', matchAnchor(c4, 1, 'Wszystko dobrze'), 1);
+eq('cytat wygrywa z numerem', matchAnchor(c4, 0, 'Wszystko dobrze'), 1);
+eq('cytat spoza tekstu → zostaje numer', matchAnchor(c4, 2, 'zupełnie czegoś innego'), 2);
+eq('numer poza zakresem i brak cytatu → null', matchAnchor(c4, 99, null), null);
+eq('cytat poza oknem szukania → zostaje numer', matchAnchor(c4, 0, 'A u ciebie', 0), 0);
 
 console.log('applySpeakerTurns — składanie segmentów');
 const split = applySpeakerTurns([DIALOG], chunks, [1, 2]);

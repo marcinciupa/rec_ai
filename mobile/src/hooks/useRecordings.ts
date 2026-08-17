@@ -18,6 +18,12 @@ export const genericName = (date: string, n: number) => `${date.replace(/\//g, '
 // kolejny numer porządkowy dla daty = liczba nagrań tego dnia + 1
 export const nextSeq = (recordings: Rec[], date: string) => recordings.filter((r) => r.date === date).length + 1;
 
+// Nazwa nagrania widoczna dla użytkownika: AI → tytuł; bez transkrypcji → generyczna z daty i numeru
+// (stały seq, fallback: pozycja w dniu). Mieszka przy store, bo używa jej i lista, i player, i toasty.
+const dayOrdinal = (list: Rec[], r: Rec) => list.filter((x) => x.date === r.date).findIndex((x) => x.id === r.id) + 1;
+export const displayName = (r: Rec, list: Rec[]) =>
+  r.transcribed && r.title ? r.title : genericName(r.date, r.seq ?? dayOrdinal(list, r));
+
 export function useRecordings() {
   const [recordings, setRecordings] = useState<Rec[]>([]);
   const maxOrder = useRef(0); // najwyższy sortOrder — nowe nagrania dostają +1 (trafiają na górę)

@@ -5,9 +5,9 @@
  *   sed -i "s#from './\\([a-zA-Z]*\\)'#from './\\1.js'#g" /tmp/rec_ai_test/*.js   # tsc nie dopisuje rozszerzeń, node ESM ich wymaga
  *   node tools/test-segment-split.mjs
  *
- * Rzecz, o którą tu chodzi: KONTEKST decyduje, gdzie kończy się wiersz, a limit długości jest tylko
- * zabezpieczeniem. Testy pilnują tej kolejności — i tego, że przy żadnej odpowiedzi modelu tekst nie
- * przestaje być dokładnie tym, co przyszło z deAPI.
+ * Rzecz, o którą tu chodzi: najpierw dzieli MODEL (wg sensu), a dopiero jego za długie bloki tnie
+ * mechanika — i nie jest w stanie skasować żadnej granicy modelu. Testy pilnują tej kolejności oraz
+ * tego, że przy żadnej odpowiedzi modelu tekst nie przestaje być dokładnie tym, co przyszło z deAPI.
  */
 import { buildChunks } from '/tmp/rec_ai_test/transcriptRows.js';
 import { buildBlocks, normalizeStarts, needsBlockSplit, BLOCK_DEFAULTS } from '/tmp/rec_ai_test/segmentSplit.js';
@@ -81,18 +81,29 @@ ok('każdy wiersz ma własne, rosnące czasy', ctx.every((r, i) => i === 0 || r.
 ok('każdy wiersz niesie swoje słowa', ctx.every((r) => r.words.length > 0));
 eq('żadne słowo nie zginęło', ctx.reduce((n, r) => n + r.words.length, 0), MOLOCH.words.length);
 
-console.log('kolejność ważności: kontekst > długość');
-// akapit wskazany przez model jest DŁUŻSZY niż maxChars — ma przetrwać w całości
-const longCtx = buildBlocks([MOLOCH], chunks, { starts: normalizeStarts([1, 5], chunks.length), maxChars: 60 });
-ok('blok kontekstowy powyżej maxChars nie jest rozcinany', longCtx.some((r) => r.text.trim().length > 60));
-eq('…i nadal są dokładnie dwa wiersze', longCtx.length, 2);
-// ten sam limit BEZ kontekstu tnie ostro — dowód, że to kontekst, a nie liczby, ustawił granice
-ok('bez kontekstu ten sam limit daje więcej wierszy', buildBlocks([MOLOCH], chunks, { maxChars: 60 }).length > longCtx.length);
-ok('tekst nadal 1:1', longCtx.map((r) => r.text).join('') === MOLOCH.text);
-// ale skrajność (powyżej hardMaxChars) mechanika przycina mimo kontekstu
-const huge = buildBlocks([MOLOCH], chunks, { starts: normalizeStarts([1, 2], chunks.length), hardMaxChars: 80 });
-ok('powyżej hardMaxChars mechanika jednak wchodzi', huge.length > 2);
-ok('tekst nadal 1:1', huge.map((r) => r.text).join('') === MOLOCH.text);
+console.log('dwa etapy: kontekst wyznacza bloki, mechanika tnie za długie WEWNĄTRZ nich');
+// Blok wskazany przez model, który wyszedł za długi, ZOSTAJE podzielony — ale jego granica przeżywa.
+const starts2 = normalizeStarts([1, 5], chunks.length); // dwa bloki po trzy zdania
+const staged = buildBlocks([MOLOCH], chunks, { starts: starts2, maxChars: 150 });
+ok('za długi blok kontekstowy jest dalej cięty maszynowo', staged.length > 2);
+ok('żaden wiersz nie przekracza limitu', staged.every((r) => r.text.trim().length <= 150 || r.words.length <= 1));
+// NAJWAŻNIEJSZE: podziału modelu nie wyrzucamy — każda jego kotwica nadal zaczyna wiersz
+const anchorTexts = [...starts2].map((i) => chunks[i].text.trim());
+ok(
+  'każda kotwica modelu nadal zaczyna wiersz (mechanika jej nie skasowała)',
+  anchorTexts.every((t) => staged.some((r) => r.text.trim().startsWith(t))),
+  `kotwice: ${JSON.stringify(anchorTexts)}\n      wiersze: ${JSON.stringify(staged.map((r) => r.text.trim().slice(0, 30)))}`
+);
+ok('tekst nadal 1:1', staged.map((r) => r.text).join('') === MOLOCH.text);
+// przy limicie, w który bloki się mieszczą, mechanika nie dokłada NIC
+const untouched = buildBlocks([MOLOCH], chunks, { starts: starts2 });
+eq('bloki mieszczące się w limicie zostają nietknięte', untouched.length, 2);
+// bez kontekstu przy tym samym limicie granice wypadają GDZIE INDZIEJ — dowód, że etap 1 realnie rządzi
+const mechOnly = buildBlocks([MOLOCH], chunks, { maxChars: 150 });
+ok(
+  'bez kontekstu granice wypadają w innych miejscach',
+  JSON.stringify(mechOnly.map((r) => r.text)) !== JSON.stringify(staged.map((r) => r.text))
+);
 
 console.log('mechanika jako zabezpieczenie (brak kontekstu — offline / awaria modelu)');
 const mech = buildBlocks([MOLOCH], chunks, {});

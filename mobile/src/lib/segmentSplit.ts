@@ -4,16 +4,16 @@
  * Problem: deAPI tnie transkrypt po własnych oknach (~30 s, ~440 znaków), nie po sensie. W widoku
  * daje to wiersz-moloch z jedną parą czasów, a tap-to-seek skacze co pół minuty zamiast co myśl.
  *
- * Kolejność ważności granic — świadoma decyzja użytkownika (2026-08-14):
- *   1. **granica segmentu źródłowego** — łamie zawsze (nie sklejamy tekstu spoza jednego segmentu);
- *   2. **kontekst** — model wskazuje, gdzie zaczyna się nowa myśl/wątek; to jest podział właściwy;
- *   3. **długość** — TYLKO zabezpieczenie. Nigdy nie unieważnia granicy kontekstowej: akapit
- *      wskazany przez model może być dłuższy niż `maxChars` i zostaje w całości. Mechanika wchodzi,
- *      gdy kontekstu NIE MA (model odmówił, brak sieci, notatka za długa na jedno pytanie) albo gdy
- *      blok urósł do rozmiaru, który znów jest molochem (`hardMaxChars`).
+ * DWA ETAPY, w tej kolejności (decyzja użytkownika, 2026-08-14):
+ *   1. **kontekst** — model dzieli nagranie wg sensu i to ON wyznacza granice bloków;
+ *   2. **mechanika** — jeśli któryś z tych bloków wyszedł dłuższy niż `maxChars`, tniemy go dalej
+ *      maszynowo, na granicach słów.
  *
- * Dzięki temu brak sieci nie oznacza braku podziału — oznacza podział gorszy, ale wciąż czytelny
- * i policzony wyłącznie z danych deAPI.
+ * Podziału modelu NIGDY nie wyrzucamy do kosza: mechanika dokłada cięcia wyłącznie WEWNĄTRZ za
+ * długiego bloku i nie potrafi skasować ani jednej granicy kontekstowej. Gdy kontekstu nie ma w ogóle
+ * (przełącznik OFF, awaria modelu, brak sieci, notatka za długa na jedno pytanie), etap 2 działa sam —
+ * podział jest wtedy gorszy, ale wciąż czytelny i policzony wyłącznie z danych deAPI. Granica segmentu
+ * źródłowego łamie zawsze, niezależnie od obu etapów.
  */
 import type { Segment } from './types';
 import { assembleRows, type Chunk } from './transcriptRows';
@@ -22,8 +22,6 @@ export const BLOCK_DEFAULTS = {
   // ~40 znaków w linii przy monoBody na 390 px → 220 znaków to ok. 5 linii. Molochy z produkcji
   // miały ~440 znaków (≈11 linii), więc to połowa tego, co dziś uchodzi za jeden wiersz.
   maxChars: 220,
-  // sufit dla bloku WSKAZANEGO przez model — kontekst ma pierwszeństwo, ale nie do nieskończoności
-  hardMaxChars: 440,
 };
 
 /**
@@ -50,11 +48,10 @@ export function needsBlockSplit(segments: Segment[] | null | undefined, maxChars
   return !!segments?.some((s) => (s.text ?? '').trim().length > maxChars);
 }
 
-/** Gdzie łamać wiersz. Liczone z góry (a nie w trakcie składania), żeby reguła długości była
- *  jawną funkcją danych, a nie skutkiem ubocznym kolejności wywołań. */
-function computeBreaks(chunks: Chunk[], starts: Set<number> | null, maxChars: number, hardMaxChars: number): boolean[] {
+/** Gdzie łamać wiersz — najpierw kotwice modelu, potem długość. Liczone z góry (a nie w trakcie
+ *  składania), żeby oba etapy były jawną funkcją danych, a nie skutkiem kolejności wywołań. */
+function computeBreaks(chunks: Chunk[], starts: Set<number> | null, maxChars: number): boolean[] {
   const brk = new Array(chunks.length).fill(false);
-  const limit = starts ? hardMaxChars : maxChars; // z kontekstem mechanika tylko ratuje skrajności
   let acc = 0;
   for (let i = 0; i < chunks.length; i++) {
     const len = chunks[i].text.length;
@@ -62,7 +59,15 @@ function computeBreaks(chunks: Chunk[], starts: Set<number> | null, maxChars: nu
       acc = len; // granica segmentu łamie zawsze (assembleRows i tak jej pilnuje)
       continue;
     }
-    if (starts?.has(i) || acc + len > limit) {
+    // ETAP 1 — granica od modelu. Zaczyna nowy blok i zeruje licznik długości.
+    if (starts?.has(i)) {
+      brk[i] = true;
+      acc = len;
+      continue;
+    }
+    // ETAP 2 — blok urósł ponad limit, więc tniemy go dalej maszynowo. Dzieje się to WEWNĄTRZ bloku
+    // z etapu 1: żadna kotwica modelu nie znika, dochodzą tylko cięcia pomiędzy nimi.
+    if (acc + len > maxChars) {
       brk[i] = true;
       acc = len;
     } else acc += len;
@@ -78,11 +83,11 @@ function computeBreaks(chunks: Chunk[], starts: Set<number> | null, maxChars: nu
 export function buildBlocks(
   segments: Segment[],
   chunks: Chunk[],
-  opts: { starts?: Set<number> | null; maxChars?: number; hardMaxChars?: number } = {}
+  opts: { starts?: Set<number> | null; maxChars?: number } = {}
 ): Segment[] | null {
-  const { starts = null, maxChars = BLOCK_DEFAULTS.maxChars, hardMaxChars = BLOCK_DEFAULTS.hardMaxChars } = opts;
+  const { starts = null, maxChars = BLOCK_DEFAULTS.maxChars } = opts;
   if (chunks.length < 2) return null;
-  const brk = computeBreaks(chunks, starts, maxChars, hardMaxChars);
+  const brk = computeBreaks(chunks, starts, maxChars);
   const rows = assembleRows(segments, chunks, (i) => brk[i]);
   return rows && rows.length > segments.length ? rows : null;
 }

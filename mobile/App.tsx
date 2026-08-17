@@ -17,8 +17,9 @@ import { useSettingsScreen } from './src/screens/SettingsScreen';
 import { useWelcomeDialog } from './src/screens/WelcomeDialog';
 import { useRecordingScreen } from './src/screens/RecordingScreen';
 import { usePlaybackScreen } from './src/screens/PlaybackScreen';
-import { useRecordings } from './src/hooks/useRecordings';
+import { useRecordings, displayName } from './src/hooks/useRecordings';
 import { useTranscription } from './src/hooks/useTranscription';
+import { Toast, type ToastVariant } from './src/components/chrome/Toast';
 import { Mode, nextMode } from './src/screens/ScreenChrome';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
@@ -72,6 +73,19 @@ export default function App() {
   // Wspólny store nagrań — dzielony przez nagrywanie (zapis) i playback (lista).
   const recStore = useRecordings();
 
+  // TOASTY TRANSKRYPCJI — jedno miejsce dla całej apki, bo zlecenie startuje z trzech ekranów
+  // (AUTO TRANSCRIBE po nagraniu, TRANS-CRIBE w playerze, menu na liście), a wynik przychodzi
+  // w tle — często gdy użytkownik jest już gdzie indziej. Pasek AI pokazuje STAN, toast pokazuje
+  // ZDARZENIE; awaria idzie na czerwono, bo o niej trzeba wiedzieć raz i wyraźnie.
+  const [aiToast, setAiToast] = useState<{ text: string; variant: ToastVariant } | null>(null);
+  const aiToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showAiToast = (text: string, variant: ToastVariant = 'phosphor', ms = 2200) => {
+    setAiToast({ text, variant });
+    if (aiToastTimer.current) clearTimeout(aiToastTimer.current);
+    aiToastTimer.current = setTimeout(() => setAiToast(null), ms);
+  };
+  useEffect(() => () => { if (aiToastTimer.current) clearTimeout(aiToastTimer.current); }, []);
+
   // Oba hooki zawsze zamontowane (reguły hooków + zachowanie stanu między trybami).
   // Settings PRZED transkrypcją: manager czyta z nich zgodę na ustalanie rozmówców przez AI.
   const settings = useSettingsScreen({ onClose: closeSettings, mode, onCycleMode: cycleMode });
@@ -123,6 +137,25 @@ export default function App() {
     return () => { deactivateKeepAwake('recai').catch(() => {}); };
   }, [settings.keepScreenOn]);
 
+  // Reagujemy na ZMIANĘ stanu zlecenia, nie na sam stan — inaczej ten sam toast wracałby przy
+  // każdym renderze. Wpisy znikają z `states` po zakończeniu, więc mapa poprzednich stanów jest
+  // odbudowywana z bieżących (kasowanie nie generuje zdarzenia).
+  const prevTrans = useRef<Record<string, string>>({});
+  useEffect(() => {
+    for (const [id, st] of Object.entries(transcription.states)) {
+      if (prevTrans.current[id] === st.status) continue;
+      // przy „gotowe" mówimy KTÓRE nagranie — wynik dolatuje w tle, często gdy użytkownik jest już
+      // przy innej notatce, więc samo „TRANSCRIBED" nie niosłoby informacji
+      const rec = recStore.recordings.find((r) => r.id === id);
+      const name = rec ? displayName(rec, recStore.recordings) : '';
+      if (st.status === 'uploading') showAiToast('SENDING TO DEAPI');
+      else if (st.status === 'done') showAiToast(name ? `${name} TRANSCRIBED` : 'TRANSCRIBED');
+      else if (st.status === 'failed') showAiToast('TRANSCRIPTION FAILED', 'risk', 3200);
+    }
+    prevTrans.current = Object.fromEntries(Object.entries(transcription.states).map(([id, st]) => [id, st.status]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transcription.states, recStore.recordings]);
+
   // Systemowy back (Android): playback(panel→lista→nagrywanie), settings→nagrywanie, nagrywanie→wyjście.
   const backRef = useRef<() => boolean>(() => false);
   backRef.current = () => {
@@ -165,6 +198,13 @@ export default function App() {
     content = playback.content;
     baseKeyboard = playback.keyboard;
   }
+  // toast transkrypcji leży NAD treścią każdego ekranu (zlecenie i wynik dotyczą całej apki, nie jednego widoku)
+  content = (
+    <>
+      {content}
+      <Toast text={aiToast?.text} variant={aiToast?.variant} />
+    </>
+  );
   // LEFT-HANDED MODE: zamiana klawisza 1 i 3 (górny rząd "screen").
   const handed: KeyboardConfig =
     settings.leftHanded && baseKeyboard.screen.length >= 3

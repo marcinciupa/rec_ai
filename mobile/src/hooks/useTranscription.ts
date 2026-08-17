@@ -9,8 +9,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Rec, Engine, Segment } from '../lib/types';
 import { isUsableName } from '../lib/speakerLabel';
-import { buildChunks, chunkPrompt, MAX_PROMPT_CHARS } from '../lib/transcriptRows';
-import { applySpeakerTurns, needsSpeakerSplit } from '../lib/speakerSplit';
+import { buildChunks, chunkPrompt, snapSpeakersToSentences, MAX_PROMPT_CHARS } from '../lib/transcriptRows';
+import { applySpeakerTurns, needsSpeakerSplit, splitByWordSpeakers, turnsToSpeakers } from '../lib/speakerSplit';
 import { buildBlocks, normalizeStarts, needsBlockSplit } from '../lib/segmentSplit';
 import type { RecordingsStore } from './useRecordings';
 import * as api from '../lib/api';
@@ -174,31 +174,41 @@ async function inferSpeakerTurns(segments: Segment[]): Promise<Segment[] | null>
   try {
     const res = await api.chat({
       transcript: body,
-      // Prompt dobrany POMIAREM na żywo (4 przebiegi przez /chat, na kształcie danych z produkcji):
-      //  • bez reguły „pytanie→odpowiedź to dwie osoby" model gubił nawet oczywiste granice tur;
-      //  • bez reguły minimalności rozmnażał mówców (4 tam, gdzie mówiły 3 osoby);
-      //  • bez zakazu naprzemienności przeplatał mówców co drugi fragment.
-      // Pole `count` jest w odpowiedzi celowo — zmusza model, żeby zadeklarował liczbę osób, zanim
-      // zacznie przypisywać (z nim liczba mówców przestała skakać); my go nie czytamy.
-      // Przypisanie bywa mimo to niedoskonałe — dlatego to ustawienie do wyłączenia, nie domyślna prawda.
+      // Prompt dobrany POMIAREM na żywo (5 wariantów × 3 przebiegi przez /chat, porównywane do wzorca
+      // granic na rozmowie 2 i 3 osób oraz na monologu):
+      //  • tablica „mówca na każdy fragment" — 2 nadmiarowe granice; TURY z cytatem — 1;
+      //  • wyliczenie „to NIE są sygnały zmiany" POGARSZAŁO wynik (model brał je za uzasadnienie);
+      //  • tury jako zakresy od–do przesadzały w drugą stronę (scalały pół rozmowy w jedną turę);
+      //  • wymaganie pola `why` i przykład z rozwiązaniem dały najlepszy wynik — i to jest ta wersja.
+      // Objaw, który to naprawia: model otwierał turę przy PRAWIE KAŻDYM zdaniu, więc granica lądowała
+      // „o zdanie za wcześnie" (ostatnie zdanie jednej osoby trafiało do wypowiedzi drugiej).
+      // Zmierzona resztka błędu: ok. jedna nadmiarowa granica na 10 fragmentów, na wstępach, które i dla
+      // człowieka są dwuznaczne. Pytanie modelu 3× i branie części wspólnej NIE pomaga (sprawdzone:
+      // błędy są powtarzalne, a część wspólna gubi prawdziwe granice) — dlatego jedno wywołanie.
       question:
         'To zapis nagrania podzielony na ponumerowane fragmenty. Automatyczne rozdzielenie głosów ' +
         'zawiodło — ustal WYŁĄCZNIE Z TREŚCI, kto mówi w którym fragmencie.\n' +
-        'Reguły:\n' +
-        '• pytanie skierowane do kogoś i następująca po nim odpowiedź to ZAWSZE dwie różne osoby;\n' +
-        '• zwrócenie się do kogoś po imieniu oznacza, że mówi KTOŚ INNY niż ta osoba, a odpowiedź należy do niej;\n' +
-        '• NIE zakładaj naprzemienności — kilka fragmentów pod rząd od tej samej osoby to normalne; zmieniaj ' +
-        'mówcę tylko tam, gdzie treść naprawdę na to wskazuje;\n' +
-        '• użyj NAJMNIEJSZEJ liczby mówców, jaka tłumaczy tę rozmowę — te same osoby wracają, więc zanim ' +
-        'wprowadzisz nowego mówcę, sprawdź, czy fragment nie należy do kogoś, kto już mówił;\n' +
-        '• monolog jednej osoby to POPRAWNA odpowiedź (same jedynki) — nie dziel na siłę.\n' +
-        'Nie zwracaj tekstu, nie scalaj ani nie dziel fragmentów. Mówców numeruj od 1, wg kolejności ' +
-        'pojawienia się. Zwróć WYŁĄCZNIE JSON: {"count": ile osób mówi, "speakers": [1, 1, 2, …]} — ' +
-        `w "speakers" dokładnie ${chunks.length} liczb, po jednej na fragment, w kolejności numerów.`,
+        'Wypisz TURY, czyli miejsca, w których ktoś ZACZYNA mówić. Tura trwa aż do następnej — kilka, ' +
+        'nawet kilkanaście fragmentów pod rząd należy zwykle do tej samej osoby.\n' +
+        'Nową turę wolno otworzyć TYLKO wtedy, gdy w treści widać konkretny sygnał zmiany mówcy:\n' +
+        '• odpowiedź na zadane wcześniej pytanie;\n' +
+        '• zwrot do rozmówcy (imię, „a ty", „powiedz mi");\n' +
+        '• przedstawienie się albo mówienie o sobie tam, gdzie przed chwilą mówiono o kimś innym.\n' +
+        'Sama zmiana zdania, tematu czy wątku NIE jest sygnałem — jedna osoba potrafi powiedzieć kilka ' +
+        'zdań pod rząd, także zadać pytanie po własnym wstępie.\n' +
+        'Dla KAŻDEJ tury podaj „why" — który to sygnał i z którego fragmentu. Jeśli nie umiesz go nazwać, ' +
+        'NIE otwieraj tury.\n' +
+        'Przykład: fragmenty „Dobra, zaczynajmy." / „Aniu, jak tam raport?" / „Skończony, wysłałam wczoraj." ' +
+        'to DWIE tury: 1 (osoba 1: wstęp i pytanie) oraz 3 (osoba 2: odpowiedź) — fragment 2 NIE zaczyna ' +
+        'nowej tury.\n' +
+        'Mówców numeruj od 1, wg kolejności pojawienia się; użyj najmniejszej liczby osób, jaka tłumaczy ' +
+        'rozmowę. Monolog = jedna tura. Nie zwracaj tekstu poza krótkim cytatem.\n' +
+        `Zwróć WYŁĄCZNIE JSON: {"count": ile osób, "turns": [{"from": 1, "quote": "pierwsze słowa ` +
+        `fragmentu", "speaker": 1, "why": "sygnał"}]} — numery rosnąco, z zakresu 1–${chunks.length}.`,
     });
-    const arr = extractJsonObject(res.answer)?.speakers;
-    if (!Array.isArray(arr)) return null;
-    return applySpeakerTurns(segments, chunks, arr.map(Number));
+    const speakers = turnsToSpeakers(chunks, extractJsonObject(res.answer)?.turns);
+    if (!speakers) return null;
+    return applySpeakerTurns(segments, chunks, speakers);
   } catch {
     return null; // rozmówcy to dodatek — ich brak nie może zepsuć transkrypcji
   }
@@ -241,6 +251,12 @@ async function inferBlocks(segments: Segment[]): Promise<Segment[] | null> {
  *  gdy diaryzacja deAPI zawiodła. Czytane w chwili transkrypcji (ref), więc zmiana w ustawieniach
  *  działa od razu, także dla wznowionych zleceń. */
 export function useTranscription(store: RecordingsStore, settings?: { aiSpeakers?: boolean; aiParagraphs?: boolean }) {
+  // Licznik zapisów transkryptu per nagranie. Player wczytuje transkrypt RAZ (efekt na [view, id,
+  // transcribed]) — a rozmówcy i akapity dolatują w tle, JUŻ PO tym wczytaniu, więc bez tego sygnału
+  // ekran pokazywał stary podział aż do wyjścia i ponownego wejścia w notatkę. To samo dotyczyło
+  // RE-TRANSCRIBE, gdzie `transcribed` jest już true, więc żadna zależność efektu się nie zmieniała.
+  const [revs, setRevs] = useState<Record<string, number>>({});
+  const bumpRev = (id: string) => setRevs((p) => ({ ...p, [id]: (p[id] ?? 0) + 1 }));
   const aiSpeakersRef = useRef(!!settings?.aiSpeakers);
   aiSpeakersRef.current = !!settings?.aiSpeakers;
   // AI PARAGRAPHS dotyczy tylko granic KONTEKSTOWYCH; podział mechaniczny działa zawsze, bo nie jest
@@ -322,6 +338,7 @@ export function useTranscription(store: RecordingsStore, settings?: { aiSpeakers
               // z odpowiedzi backendu — to on rozstrzyga, czym faktycznie policzył
               engine: res.engine ?? opts?.engine ?? 'standard',
             })
+            .then(() => bumpRev(rec.id))
             .catch(() => {});
           // Rozmówcy — w tle, po zapisaniu transkryptu. Osobne wywołania (nie doklejone do promptu
           // o tytuł), żeby nieudane sparsowanie JSON-a nie zabrało przy okazji tytułu.
@@ -339,8 +356,21 @@ export function useTranscription(store: RecordingsStore, settings?: { aiSpeakers
                     engine: res.engine ?? opts?.engine ?? 'standard',
                     ...extra,
                   })
+                  .then(() => bumpRev(rec.id))
                   .catch(() => {});
               let working = segs;
+              // 0. ROZMÓWCY Z DANYCH deAPI — zawsze, bez pytania kogokolwiek. `segment.speaker` to
+              //    etykieta zbiorcza ~25-sekundowego segmentu, a mówca bywa zmieniony w jego środku;
+              //    słowa mają własne etykiety, więc tniemy dokładnie tam, gdzie druga osoba zaczyna
+              //    mówić. Na realnym nagraniu poprawiało to przypisanie 16% słów i przesuwało granice
+              //    o 1–17 s. Mechanicznie, offline, bez kosztu — więc przed jakimkolwiek zapytaniem do AI.
+              // najpierw korekta spóźnienia diaryzacji (granica → koniec zdania), potem cięcie
+              const snapped = snapSpeakersToSentences(working);
+              const byWords = splitByWordSpeakers(snapped, buildChunks(snapped));
+              if (byWords) {
+                working = byWords;
+                await save({ segments: working });
+              }
               // 1. diaryzacja deAPI zawiodła (jeden mówca na całym nagraniu) → spróbuj z treści.
               //    Gdy rozdzieliła poprawnie albo brak zgody w ustawieniach — pomijamy, więc
               //    dyktowanie nie generuje ani jednego dodatkowego zapytania.
@@ -454,7 +484,10 @@ export function useTranscription(store: RecordingsStore, settings?: { aiSpeakers
     []
   );
 
-  return { start, stateOf, states };
+  /** Ile razy transkrypt nagrania został zapisany — zależność do przeładowania widoku. */
+  const revOf = (id?: string) => (id ? revs[id] ?? 0 : 0);
+
+  return { start, stateOf, states, revOf };
 }
 
 export type TranscriptionStore = ReturnType<typeof useTranscription>;
