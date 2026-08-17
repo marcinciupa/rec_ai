@@ -78,6 +78,55 @@ Testing continues on the closed track. Next I want feedback on the ADVANCED engi
 
 ---
 
+# Sekcja „Informacje o Twojej aplikacji"
+
+Te pola są opisowe, nie deklaratywne — nie stwierdzają faktów o przebiegu testu, więc można je
+napisać wprost. Wszystko poniżej jest wzięte z tego, co apka realnie robi (patrz
+`STORE_LISTING_EN.md`), bez obietnic na przyszłość.
+
+## 7. Kim są docelowi odbiorcy? (300)
+
+```
+People who think out loud and need the words afterwards: students, journalists, researchers, sales and field workers, and anyone who records meetings, interviews or ideas on the way. They want a recording turned into text they can search and question, not an audio file they never replay.
+```
+**288 / 300**
+
+**Wariant z dopiskiem o zasięgu i języku (przydatny, bo UI jest tylko po angielsku):**
+```
+Adults who record spoken notes on a phone — students, journalists, researchers, sales and field workers, and people who capture ideas while walking or driving. They need the recording as text they can read and search, not an audio file nobody replays. No specific region; English UI.
+```
+**283 / 300**
+
+> Świadomie BEZ deklaracji w stylu „for everyone" i bez grup, których nie obsługujesz. Google
+> zestawia tę odpowiedź z oceną treści i Data safety — apka nie jest kierowana do dzieci
+> (polityka prywatności mówi to wprost), więc odbiorcy to dorośli.
+
+## 8. Jaką wartość ma aplikacja dla użytkowników? (300)
+
+```
+It closes the gap between recording something and being able to use it. The note transcribes itself, gets a title, and is split into paragraphs and speakers, so it is readable. You can ask the AI about what was said, and playback follows the text word by word. No account is needed.
+```
+**282 / 300**
+
+**Wariant kładący nacisk na prywatność i sterowanie:**
+```
+A dictaphone that gives the words back. Recordings transcribe themselves, get an AI title and are split by speaker and paragraph; you can ask questions about a note and jump to any line by tapping the text. No account, and recordings and transcripts stay on the device.
+```
+**269 / 300**
+
+> Każde zdanie odpowiada funkcji, która jest w wydaniu 0.988 — transkrypcja, tytuł od AI,
+> podział na akapity i rozmówców, czat o notatce, karaoke co do słowa, brak konta, dane lokalnie.
+> Nie ma tu ani jednej obietnicy „na później", bo to pole bywa zestawiane z opisem w sklepie.
+
+## 9. Oczekiwana liczba instalacji w pierwszym roku
+
+Wybierz **najniższy realny przedział** (dla pierwszego wydania bez budżetu marketingowego zwykle
+`0–1000`, ewentualnie `1000–10 000`, jeśli masz konkretny kanał dotarcia). To pytanie badawcze —
+Google zbiera nim skalę, a nie ocenia ambicję. Zawyżony przedział niczego nie ułatwia, a przy
+świeżym koncie bez historii wygląda niespójnie z resztą wniosku.
+
+---
+
 ## Zanim wyślesz — sprawdź zgodność z tym, co Google i tak widzi
 
 1. **Liczba testerów** w odpowiedzi ≥ liczba uczestników opt-in w Console. Nie zawyżaj.
