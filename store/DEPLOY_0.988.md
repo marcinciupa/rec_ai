@@ -146,9 +146,15 @@ To zamyka jedyne realne ryzyko wydania (martwe AI przez brak klucza w bundlu) **
 ## 7. Stan spraw otwartych (aktualizacja 2026-08-17, po wykonaniu)
 
 1. ✅ **Polityka prywatności jest live i po angielsku.** Przepisana, sprostowana względem kodu
-   i wdrożona (`railway up`, commit `f6dea4a`). Weryfikacja po deployu: `lang="en"`,
-   `<title>Privacy Policy — Rec+</title>`, `Last updated: 17 August 2026`, zero wystąpień
-   starego „REC_AI". Szczegóły sprostowań — w wiadomości commita.
+   i wdrożona dwoma turami (`f6dea4a` + `d887f8f`, po każdej `railway up`). Weryfikacja po
+   deployu: `lang="en"`, `<title>Privacy Policy — Rec+</title>`, `Last updated: 17 August 2026`,
+   zero wystąpień starego „REC_AI"; po drugiej turze dodatkowo obecne akapit o SHARE i
+   sformułowanie o retencji logów hostingu. Szczegóły sprostowań — w wiadomościach commitów.
+
+   Przy okazji audytu wyszedł **realny wyciek**: `webhooks.py` logowało `str(e)`, a
+   `httpx.HTTPStatusError` wkleja do komunikatu URL żądania — czyli PRESIGNED `result_url`
+   do artefaktu z transkryptem; ten sam string wracał do klienta w 502. Naprawione (`d887f8f`),
+   wdrożone i przetestowane na produkcji (401 bez klucza, 200 na obu silnikach, czat 200).
 2. ✅ **Dymny test wykonany przed uploadem** — sekcja 4.1.
 3. ✅ **`store/STORE_LISTING_EN.md` przepisany** dla `Rec+` 0.988: nazwa, opis pełny (3977/4000),
    „What's new" (476/500), Data safety z pełną listą uprawnień z AAB. Każde zdanie oparte na
