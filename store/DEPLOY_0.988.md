@@ -1,8 +1,12 @@
 # Wdrożenie 0.988 (versionCode 9880) na Google Play
 
-> Build z `main` @ `0163497` (fast-forward z https://github.com/marcinciupa/rec_ai.git, 2026-08-17).
-> Poprzednia wersja na sklepie: **0.974 (9740)**.
-> Artefakt: `mobile/android/app/build/outputs/bundle/release/app-release.aab` (60,3 MB, 2026-08-17 10:03).
+> Build z `main` @ `458d368` — czyli z tego, co stoi na https://github.com/marcinciupa/rec_ai
+> (wypchnięte 2026-08-17). Poprzednia wersja na sklepie: **0.974 (9740)**.
+> Artefakt: `mobile/android/app/build/outputs/bundle/release/app-release.aab` (60 261 350 B, 12:56).
+>
+> Artefakt przebudowany po wypchnięciu, żeby pochodził z kodu, który REALNIE jest w repo —
+> pierwszy build (10:03) powstał na drzewie roboczym z niezacommitowanym pluginem podpisu.
+> Rozmiar bajt w bajt ten sam, weryfikacja przeszła identycznie.
 
 ---
 
@@ -68,9 +72,15 @@ potem `gradlew bundleRelease` (BUILD SUCCESSFUL w 2 min 1 s, Gradle 9.3.1).
 
 ### 4.1 Dymny test — zrobiony PRZED uploadem, na tym samym artefakcie
 
-Nie czekaliśmy na tor testowy Play: `bundletool build-apks --mode=universal` wyciągnął APK
-**z tego samego `app-release.aab`**, zainstalowany na emulatorze Pixel_7_API_34 (Android 14).
+Nie czekaliśmy na tor testowy Play: `bundletool build-apks` wyciągnął APK **z tego samego
+`app-release.aab`**, zainstalowany na emulatorze Pixel_7_API_34 (Android 14).
 `dumpsys package` potwierdza `versionCode=9880`, `versionName=0.988`.
+
+> Wariant `--mode=universal` (88 MB, wszystkie ABI naraz) wywalił się na emulatorze z
+> `INSTALL_FAILED_INSUFFICIENT_STORAGE` przy 379 MB wolnego. Lepszy i tak jest
+> `--connected-device`: bundletool generuje wtedy splity pasujące do urządzenia — czyli
+> dokładnie to, co Play dostarcza użytkownikowi. Powtórzone na przebudowanym artefakcie:
+> instalacja + start apki bez crasha (`logcat -b crash` pusty).
 
 W apce: pierwsze uruchomienie → kreator ustawień → ekran nagrywania z **realnym wolnym miejscem**
 („~6h/536MB AVAILABLE" — funkcja z 0.975 działa na sprzęcie) → nagranie 6 s → pasek „AI TRANSCRIBING
