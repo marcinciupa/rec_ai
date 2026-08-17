@@ -26,6 +26,7 @@
     },
     "plugins": [
       "./plugins/withAndroidSoftInput.js",
+      "./plugins/withAndroidReleaseSigning.js",
       "expo-font",
       [
         "expo-audio",
