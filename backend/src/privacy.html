@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="pl">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Polityka Prywatności — REC_AI</title>
+<title>Privacy Policy — Rec+</title>
 <style>
   :root { color-scheme: light dark; }
   body { max-width: 760px; margin: 0 auto; padding: 24px 18px 64px; font: 16px/1.6 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
@@ -12,73 +12,102 @@
   .updated { color: #888; font-size: .9rem; }
   code { background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 4px; }
   ul { padding-left: 1.2em; }
+  .note { background: rgba(127,127,127,.12); border-radius: 8px; padding: 10px 14px; }
   footer { margin-top: 3em; color: #888; font-size: .9rem; }
 </style>
 </head>
 <body>
-  <h1>Polityka Prywatności — REC_AI</h1>
-  <p class="updated">Ostatnia aktualizacja: 23 czerwca 2026</p>
+  <h1>Privacy Policy — Rec+</h1>
+  <p class="updated">Last updated: 17 August 2026</p>
 
-  <p>Niniejsza Polityka opisuje, jak aplikacja <strong>REC_AI</strong> („Aplikacja") przetwarza dane podczas korzystania
-  z funkcji nagrywania notatek głosowych, ich transkrypcji oraz czatu AI o notatce.</p>
+  <p>This Policy explains how the <strong>Rec+</strong> application — Android package
+  <code>com.glue010.recai</code> ("the App", "we", "us") — processes data when you use its
+  voice-note recording, transcription, and AI-chat features.</p>
 
-  <p><strong>Administrator:</strong> [UZUPEŁNIJ: imię i nazwisko / nazwa]<br />
-  <strong>Kontakt:</strong> [UZUPEŁNIJ: adres e-mail]</p>
+  <p><strong>Data controller:</strong> the publisher of the Rec+ app<br />
+  <strong>Address:</strong> Poland<br />
+  <strong>Contact:</strong> glue010@gmail.com</p>
 
-  <h2>1. Jakie dane przetwarzamy</h2>
+  <h2>1. What data we process</h2>
   <ul>
-    <li><strong>Nagrania audio</strong> — tworzone, gdy nagrywasz notatkę. Zapisywane <strong>lokalnie na Twoim urządzeniu</strong>.</li>
-    <li><strong>Transkrypcje i wiadomości czatu</strong> — tekst z transkrypcji nagrań oraz Twoje pytania i odpowiedzi AI. Zapisywane <strong>lokalnie na urządzeniu</strong>.</li>
-    <li><strong>Anonimowy identyfikator urządzenia</strong> — losowy identyfikator generowany w Aplikacji (nie powiązany z Twoją tożsamością, kontem ani numerem telefonu). Służy wyłącznie ograniczaniu nadużyć i kontroli kosztów po stronie serwera.</li>
-    <li><strong>Dane techniczne</strong> — podstawowe metadane żądań (czas, rozmiar pliku, kod odpowiedzi). <strong>Nie zawierają treści</strong> nagrań.</li>
+    <li><strong>Audio recordings</strong> — created when you record a note. Stored <strong>locally on your device</strong>. A copy is transmitted to our server and on to our transcription provider only to convert it to text (see §3), then discarded by us.</li>
+    <li><strong>Transcripts and chat messages</strong> — the text produced from your recordings and the questions/answers you exchange with the AI, including recent messages from the same conversation. Stored <strong>locally on your device</strong>.</li>
+    <li><strong>Anonymous device identifier</strong> — a random identifier generated within the App. It is <strong>not</strong> the Android Advertising ID, not a hardware identifier, and is <strong>not</strong> linked to your identity, an account, name, email, or phone number. Used solely for abuse prevention and cost control on the server.</li>
+    <li><strong>Technical metadata</strong> — basic, content-free request metadata such as request identifiers, processing status, and timing. This <strong>does not contain the content</strong> of your recordings, transcripts, or chats.</li>
   </ul>
-  <p>Aplikacja <strong>nie wymaga konta</strong> i <strong>nie zbiera</strong> danych takich jak imię, e-mail, lokalizacja, kontakty czy identyfikatory reklamowe.</p>
+  <p>The App <strong>requires no account</strong> and does <strong>not</strong> collect data such as your name, email, precise or coarse location, contacts, photos, or advertising identifiers. The App contains <strong>no advertising or analytics SDKs</strong> and does not track you across apps or websites.</p>
 
-  <h2>2. Po co przetwarzamy dane</h2>
+  <h2>2. Why we process data (purposes)</h2>
   <ul>
-    <li>Aby <strong>przetworzyć nagranie na tekst</strong> (transkrypcja).</li>
-    <li>Aby <strong>odpowiadać na pytania o notatkę</strong> (czat AI).</li>
-    <li>Aby <strong>zapewnić działanie i bezpieczeństwo</strong> usługi (ograniczanie nadużyć).</li>
-  </ul>
-
-  <h2>3. Komu przekazujemy dane (podmioty przetwarzające)</h2>
-  <p>Aby zrealizować transkrypcję i czat, treść jest wysyłana z Aplikacji do naszego serwera pośredniczącego, a stamtąd do dostawców AI:</p>
-  <ul>
-    <li><strong>deAPI</strong> — transkrypcja audio (model Whisper). Wysyłany jest plik audio nagrania.</li>
-    <li><strong>OpenRouter</strong> (i podłączony model językowy, np. Google Gemini) — czat o notatce. Wysyłany jest transkrypt i Twoje pytanie.</li>
-    <li><strong>Railway</strong> — hosting serwera pośredniczącego.</li>
-  </ul>
-  <p>Nasz serwer pośredniczący <strong>nie przechowuje</strong> Twoich nagrań ani transkryptów — przekazuje je wyłącznie w celu realizacji żądania. Przetwarzanie przez powyższych dostawców podlega ich własnym politykom prywatności.</p>
-
-  <h2>4. Gdzie i jak długo przechowujemy dane</h2>
-  <ul>
-    <li><strong>Na urządzeniu:</strong> nagrania, transkrypcje i wiadomości czatu są przechowywane lokalnie do momentu ich <strong>usunięcia przez Ciebie</strong> w Aplikacji lub <strong>odinstalowania</strong> Aplikacji.</li>
-    <li><strong>Na serwerze:</strong> treść nie jest trwale przechowywana (przetwarzanie przejściowe na czas realizacji żądania). Metadane techniczne mogą być przechowywane krótkoterminowo w logach.</li>
+    <li>To <strong>convert your recording into text</strong> (transcription).</li>
+    <li>To <strong>answer your questions about a note</strong> (AI chat).</li>
+    <li>To <strong>prepare a finished transcript for reading</strong> — when a transcription completes, the App sends the transcript to the AI provider <strong>on its own, without any question from you</strong>, to produce a short note title. This happens for every transcript. When you use the <strong>ADVANCED</strong> transcription engine, which returns the text split into speaker segments, the App also asks the model to group the text into speaker turns and readable paragraphs, and to pick up a speaker's <strong>first name if it is clearly spoken in the recording</strong> (this is how a note can show <code>MRC</code> instead of <code>SPEAKER_00</code>). The <strong>AI SPEAKERS</strong> and <strong>AI PARAGRAPHS</strong> switches in Settings turn the turn- and paragraph-grouping requests off; the title and the speaker naming are not behind a switch. With the <strong>STANDARD</strong> engine only the title request is made.</li>
+    <li>To <strong>operate and secure the service</strong> (abuse prevention, cost control).</li>
   </ul>
 
-  <h2>5. Uprawnienia</h2>
+  <h2>3. Who we share data with (processors / recipients)</h2>
+  <p>To perform transcription and chat, content is sent from the App to our intermediary server and from there to AI providers:</p>
   <ul>
-    <li><strong>Mikrofon</strong> — wymagany do nagrywania notatek głosowych. Nagrywanie następuje wyłącznie po jego uruchomieniu przez Ciebie.</li>
+    <li><strong>deAPI</strong> — audio transcription (Whisper model). We send the audio file, the language you selected and the transcription engine you chose. The file name is a random identifier, never the note title. If you dictate a question inside the AI chat, that short recording is transcribed the same way and is deleted from your device immediately afterwards. The <strong>ADVANCED</strong> engine additionally asks deAPI to separate speakers and return per-word timings.</li>
+    <li><strong>OpenRouter</strong> (and the connected large language model — currently Google Gemini 2.5 Flash Lite) — used both for chat about a note <strong>and for the automatic preparation of a finished transcript described in §2</strong>. We send the transcript (or an extract of it) and the question — either the one you typed or one the App forms by itself; for chat we also send up to the <strong>last 12 messages</strong> of that same conversation.</li>
+    <li><strong>Railway</strong> — hosting of our intermediary server.</li>
+  </ul>
+  <p>Our intermediary server is <strong>stateless</strong>: it does <strong>not</strong> permanently store your recordings or transcripts — it forwards them only to fulfil your request and then discards the content (a finished transcript stays in the server's memory for <strong>up to about 25 minutes</strong>, so that a late or repeated delivery can still reach your device, and is then deleted automatically). Some providers may process data on servers <strong>outside Poland, including outside the European Economic Area (EEA)/UK</strong>. Their processing is governed by their own privacy policies — please review deAPI's, OpenRouter's, and Railway's policies for where and how they process data.</p>
+  <p class="note"><strong>Please note:</strong> voice recordings may incidentally contain sensitive information depending on what you say. Avoid recording content you would not want processed by the AI providers listed above.</p>
+
+  <h2>4. Where and how long we keep data</h2>
+  <ul>
+    <li><strong>On your device:</strong> recordings, transcripts and chat messages are kept locally until you <strong>delete</strong> them in the App or <strong>uninstall</strong> the App. Deleting a note removes it from the App immediately (its transcript and chat go with it); the audio file itself is kept a little longer so that <strong>UNDO</strong> can bring the note back, and is erased the next time the App starts.</li>
+    <li><strong>On the server:</strong> content is <strong>not permanently stored</strong> and is never written to a database — transient processing for the duration of the request. A finished transcript stays in the server's memory for <strong>up to about 25 minutes</strong> and is then deleted automatically. Content-free technical metadata may appear short-term in logs.</li>
+    <li><strong>At the AI providers:</strong> retention is governed by each provider's own policy.</li>
   </ul>
 
-  <h2>6. Twoje prawa i kontrola</h2>
+  <h2>5. Legal bases for processing (GDPR — EU/EEA/UK users)</h2>
   <ul>
-    <li>Możesz w każdej chwili <strong>usunąć dowolne nagranie</strong> w Aplikacji.</li>
-    <li><strong>Odinstalowanie</strong> Aplikacji usuwa wszystkie dane przechowywane lokalnie na urządzeniu.</li>
-    <li>W sprawach dotyczących danych skontaktuj się pod adresem podanym wyżej.</li>
+    <li><strong>Performance of a service you request</strong> (Art. 6(1)(b)) — to transcribe a recording and answer chat questions.</li>
+    <li><strong>Consent</strong> (Art. 6(1)(a)) — for microphone access, granted via the OS permission prompt and withdrawable any time in device settings.</li>
+    <li><strong>Legitimate interests</strong> (Art. 6(1)(f)) — to keep the service secure and prevent abuse/cost, using the anonymous identifier and technical metadata. You may object to this processing (§6).</li>
   </ul>
 
-  <h2>7. Bezpieczeństwo</h2>
-  <p>Połączenia z serwerem są szyfrowane (HTTPS). Klucze do usług AI są przechowywane po stronie serwera i nie są zawarte w Aplikacji.</p>
+  <h2>6. Your rights</h2>
+  <p>You may have the right to access, rectify, erase, restrict, or object to processing, to data portability, and to withdraw consent. Core controls are available in the App:</p>
+  <ul>
+    <li><strong>Delete any recording</strong> at any time in the App.</li>
+    <li><strong>Uninstall the App</strong> to remove all data stored locally on your device.</li>
+  </ul>
+  <p>To make a rights request at the server level, contact us at the address above. Because the App uses no account and only an anonymous identifier, we may be <strong>unable to identify your data</strong> on the server (GDPR Art. 11); we will explain this and ask for information that lets us locate it. <strong>EU/EEA/UK users</strong> may lodge a complaint with a supervisory authority (in Poland: the President of the Personal Data Protection Office, UODO).</p>
 
-  <h2>8. Dzieci</h2>
-  <p>Aplikacja nie jest skierowana do dzieci poniżej 13. roku życia i nie zbiera świadomie ich danych.</p>
+  <h2>7. U.S. state privacy rights (including California — CCPA/CPRA)</h2>
+  <p>We <strong>do not "sell"</strong> your personal information and <strong>do not "share"</strong> it for cross-context behavioral advertising. We do not use your data for targeted advertising. California residents (and residents of other U.S. states with similar laws) may have the right to know, access, delete, and correct personal information and to be free from discrimination for exercising these rights. To exercise these rights, contact us at the address above.</p>
 
-  <h2>9. Zmiany Polityki</h2>
-  <p>Możemy aktualizować niniejszą Politykę. Zmiany publikujemy pod tym samym adresem wraz z datą aktualizacji.</p>
+  <h2>8. Permissions</h2>
+  <ul>
+    <li><strong>Microphone</strong> (<code>RECORD_AUDIO</code>) — the only permission the App asks you for. Required to record voice notes; recording happens only after you start it in the App.</li>
+  </ul>
+  <p>The App also declares these technical permissions, none of which prompts you and none of which gives access to your location, contacts, photos, or an advertising identifier:</p>
+  <ul>
+    <li><code>INTERNET</code>, <code>ACCESS_NETWORK_STATE</code> — to send a recording for transcription and to use AI chat.</li>
+    <li><code>MODIFY_AUDIO_SETTINGS</code>, <code>VIBRATE</code>, <code>WAKE_LOCK</code> — playback routing, the haptic feedback on the on-screen keys, and keeping the screen awake while you record.</li>
+    <li><code>FOREGROUND_SERVICE</code>, <code>FOREGROUND_SERVICE_MEDIA_PLAYBACK</code> — so playback can continue while the App is in the background.</li>
+    <li><code>USE_BIOMETRIC</code>, <code>USE_FINGERPRINT</code> — declared by the secure-storage component that keeps the anonymous device identifier. The App never asks you to authenticate.</li>
+    <li><code>SYSTEM_ALERT_WINDOW</code> — declared by the app framework. The App does not draw over other apps and never asks you to enable this.</li>
+    <li><code>READ_EXTERNAL_STORAGE</code>, <code>WRITE_EXTERNAL_STORAGE</code>, limited to <strong>Android 12L and older</strong> — legacy file-access permissions declared by the framework. Your recordings are written to the App's own private storage, not to shared storage.</li>
+  </ul>
+
+  <h2>9. Security</h2>
+  <p>Connections to our server are encrypted in transit (HTTPS). The <strong>AI providers' API keys (deAPI, OpenRouter) live only on our server and are never shipped inside the App.</strong> The App does carry one key of its own, which only lets our server tell requests coming from the App apart from random traffic — it identifies the App, not you, and unlocks no personal data. No method of transmission or storage is 100% secure, but we apply reasonable safeguards.</p>
+
+  <h2>10. Children</h2>
+  <p>The App is <strong>not directed to children under 13</strong> (and, where applicable, under the age of digital consent in your country, up to 16 in the EU) and we do not knowingly collect their data. If you believe a child has provided us data, contact us and we will delete it.</p>
+
+  <h2>11. Changes to this Policy</h2>
+  <p>We may update this Policy. We publish changes at the same address with an updated "Last updated" date. Material changes will be highlighted where practicable.</p>
+
+  <h2>12. Contact</h2>
+  <p>Rec+ · Poland · <a href="mailto:glue010@gmail.com">glue010@gmail.com</a></p>
 
   <footer>
-    REC_AI · [UZUPEŁNIJ: nazwa] · [UZUPEŁNIJ: adres e-mail]
+    Rec+ · Poland · glue010@gmail.com
   </footer>
 </body>
 </html>
