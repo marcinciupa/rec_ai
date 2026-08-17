@@ -7,7 +7,7 @@ import * as SQLite from 'expo-sqlite';
 import type { Rec, Transcript, ChatMessage } from './types';
 
 const DB_NAME = 'recai.db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 // stare nagrania demo (seed z wcześniejszych wersji) — jednorazowo czyszczone w migracji v2
 const DEMO_IDS = ['r1', 'r2', 'r3', 'r4'];
@@ -80,6 +80,12 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
     // Same segmenty siedzą jako JSON, więc `speaker`/`words` nie wymagają zmiany schematu.
     await db.execAsync(`ALTER TABLE transcripts ADD COLUMN engine TEXT`);
     version = 3;
+  }
+  if (version < 4) {
+    // `speaker_names` — mapa id rozmówcy → imię rozpoznane przez AI (JSON). Osobna kolumna, a nie
+    // pole w segmentach: imię dotyczy CAŁEGO nagrania, a nie pojedynczego segmentu, i liczymy je raz.
+    await db.execAsync(`ALTER TABLE transcripts ADD COLUMN speaker_names TEXT`);
+    version = 4;
   }
   await db.execAsync(`PRAGMA user_version = ${DB_VERSION}`);
 }
@@ -168,8 +174,8 @@ export async function saveTranscript(t: Transcript): Promise<void> {
   // WHERE EXISTS = atomowa gwarancja: jeśli nagranie zostało usunięte (np. w trakcie transkrypcji),
   // NIE piszemy osieroconego wiersza transkryptu (brak FK/cascade w schemacie). Jeden statement → bez TOCTOU.
   await db.runAsync(
-    `INSERT OR REPLACE INTO transcripts (recording_id, text, segments, language, status, job_id, engine, updated_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM recordings WHERE id = ?)`,
+    `INSERT OR REPLACE INTO transcripts (recording_id, text, segments, language, status, job_id, engine, speaker_names, updated_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM recordings WHERE id = ?)`,
     t.recordingId,
     t.text ?? null,
     t.segments ? JSON.stringify(t.segments) : null,
@@ -177,9 +183,21 @@ export async function saveTranscript(t: Transcript): Promise<void> {
     t.status,
     t.jobId ?? null,
     t.engine ?? null,
+    t.speakerNames ? JSON.stringify(t.speakerNames) : null,
     Date.now(),
     t.recordingId
   );
+}
+
+/** JSON → obiekt {id: imię}; uszkodzony wpis traktujemy jak brak, żeby nie wywalić odczytu notatki. */
+function parseJsonObject(raw: string | null): Record<string, string> | null {
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, string>) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getTranscript(recordingId: string): Promise<Transcript | null> {
@@ -192,6 +210,7 @@ export async function getTranscript(recordingId: string): Promise<Transcript | n
     status: string;
     job_id: string | null;
     engine: string | null;
+    speaker_names: string | null;
   }>('SELECT * FROM transcripts WHERE recording_id = ?', recordingId);
   if (!r) return null;
   let segments: Transcript['segments'] = null;
@@ -210,6 +229,7 @@ export async function getTranscript(recordingId: string): Promise<Transcript | n
     jobId: r.job_id,
     // NULL = wiersz sprzed migracji v3, czyli policzony starym silnikiem
     engine: (r.engine as Transcript['engine']) ?? 'standard',
+    speakerNames: parseJsonObject(r.speaker_names),
   };
 }
 

@@ -11,7 +11,9 @@ import { View, Text, Pressable, ScrollView } from 'react-native';
 import { usePlayer } from '../hooks/usePlayer';
 import { hapticKnob, hapticContinuous } from '../lib/haptics';
 import { getTranscript } from '../lib/db';
-import { speakerNumbers, spokenCutFromWords } from '../lib/transcript';
+import { speakerNumbers, spokenCutFromWords, segmentStep, transcriptScrollY } from '../lib/transcript';
+import { speakerLabels } from '../lib/speakerLabel';
+import { useStorageLabel } from '../hooks/useStorage';
 import { shareRecording } from '../lib/share';
 import type { Transcript, Word, Engine } from '../lib/types';
 import { color, font, screen } from '../theme/tokens';
@@ -19,19 +21,15 @@ import type { KeyboardConfig, ScreenKeyDef } from '../components/chrome/Keyboard
 import type { KeyIconName } from '../components/icons/keyIcons.gen';
 import type { SliderConfig } from '../components/chrome/SeekSlider';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
+import { Toast } from '../components/chrome/Toast';
 import type { Rec, RecordingsStore } from '../hooks/useRecordings';
-import { genericName } from '../hooks/useRecordings';
+import { displayName } from '../hooks/useRecordings';
 import { deriveAiStatus, type TranscriptionStore } from '../hooks/useTranscription';
 import { useChatView } from './ChatView';
 
 type Phase = 'LIST' | 'CONFIRM' | 'DELETED' | 'DETAILS';
 type View2 = 'LIST' | 'PLAYER' | 'CHAT';
 type PlayerState = 'LOADING' | 'STOPPED' | 'PLAYING' | 'PAUSED';
-
-// nazwa: AI → tytuł; bez transkrypcji → generyczna z daty + numer (stały seq, fallback: pozycja w dniu)
-const dayOrdinal = (list: Rec[], r: Rec) => list.filter((x) => x.date === r.date).findIndex((x) => x.id === r.id) + 1;
-const displayName = (r: Rec, list: Rec[]) =>
-  r.transcribed && r.title ? r.title : genericName(r.date, r.seq ?? dayOrdinal(list, r));
 
 // Seeker = PRZEWIJANIE (nie tempo audio): wychylenie ustawia prędkość przesuwania playheada
 // przez nagranie (audio milknie na czas przewijania). Środek (level 0) = brak przewijania = normalne
@@ -187,7 +185,22 @@ function TranscriptRow({ startN, endN, endLabel, text, words, speaker, posSec, o
               ...(started ? ({ boxShadow: '0px 0px 4px 0px rgba(226,255,228,0.25)' } as any) : null),
             }}
           >
-            <Text style={{ ...cap, color: color.dark21 }}>{speaker}</Text>
+            {/* Bold + jawny lineHeight: przy Kode Mono Regular 10 z wyłączonym includeFontPadding glif
+                siadał w pigułce za wysoko (metryki fontu ≠ wysokość pudełka), a cienka kreska w tak
+                małym stopniu była trudna do odczytania na jasnym tle. */}
+            <Text
+              style={{
+                fontFamily: font.monoLabel.family,
+                fontSize: font.monoCaption.size,
+                lineHeight: font.monoCaption.size + 4,
+                color: color.dark21,
+                textAlign: 'center',
+                includeFontPadding: false,
+                paddingHorizontal: 3,
+              } as any}
+            >
+              {speaker}
+            </Text>
           </View>
         ) : null}
         <Text style={{ ...cap, color: started ? bright : dim, ...(current ? glow('rgba(226,255,228,0.25)') : null) }}>{fmtShort(startN)}</Text>
@@ -214,6 +227,10 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
   // szerokość tekstowi — więc go chowamy.
   const speakers = hasSegs ? speakerNumbers(segs!) : new Map<string, number>();
   const showSpeakers = speakers.size >= 2;
+  // Etykieta kafla: 3-znakowy skrót imienia tam, gdzie AI rozpoznało je PEWNIE („Marc" → MRC),
+  // numer wg kolejności wejścia w pozostałych. Mieszanka („MRC", „2", „TBT") jest w porządku —
+  // lepsza niż zmyślone imię dla kogoś, kogo model nie rozpoznał.
+  const labels = speakerLabels(speakers, transcript.speakerNames);
 
   // granice czasowe segmentów (koniec = własny end → start następnego → ∞ dla ostatniego)
   const rows = hasSegs
@@ -221,14 +238,14 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
         const startN = s.start ?? 0;
         const nextStart = segs![i + 1]?.start ?? null;
         const endN = s.end ?? nextStart ?? Infinity;
-        const no = s.speaker ? speakers.get(s.speaker) : undefined;
+        const label = s.speaker ? labels.get(s.speaker) : undefined;
         return {
           startN,
           endN,
           endLabel: s.end != null || nextStart != null ? fmtShort(s.end ?? nextStart!) : '',
           text: s.text.trim(),
           words: s.words ?? null,
-          speaker: showSpeakers && no != null ? String(no) : null,
+          speaker: showSpeakers && label ? label : null,
         };
       })
     : [];
@@ -241,13 +258,58 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
     if (posSec > 0) for (let i = 0; i < rows.length; i++) if (posSec >= rows[i].startN) curIdx = i;
   }
 
-  const pct = hasSegs ? curIdx : Math.round(ratio * 100); // segmenty: scroll na zmianie segmentu; fallback: co ~1%
+  // AUTO-SCROLL. Poprzednio przewijaliśmy PROPORCJONALNIE (numer segmentu / liczba segmentów × zakres
+  // scrolla) — przy nierównych wysokościach bloków bieżący wiersz lądował raz pod górną krawędzią, raz
+  // przy dolnej. Teraz liczymy z realnej geometrii: początek bloku ląduje przy GÓRNEJ krawędzi, a blok
+  // wyższy od szyby przesuwa się w trakcie czytania dokładnie tyle, żeby pod wypowiadanym wierszem
+  // zostawały DWA wiersze zapasu (patrz transcriptScrollY). Koniec bloku = następny wskakuje na górę.
+  const rowGeom = useRef<Map<number, { y: number; h: number }>>(new Map());
+  const lastScroll = useRef(-1);
+  // Zapas pod ostatnim blokiem. Bez niego OSTATNIE bloki nie mają jak dojechać do górnej krawędzi —
+  // treść się kończy, scroll dobija do maksimum i reguła przestaje obowiązywać akurat na końcu notatki.
+  // Dajemy dokładnie tyle, ile trzeba (szyba minus wysokość ostatniego bloku), a nie „na oko".
+  const [padBottom, setPadBottom] = useState(0);
+  const syncPad = () => {
+    const last = rowGeom.current.get(rows.length - 1);
+    if (!last || !sizes.current.view) return;
+    const want = Math.max(0, Math.round(sizes.current.view - last.h));
+    setPadBottom((prev) => (Math.abs(prev - want) > 2 ? want : prev));
+  };
+  const cur = rows[curIdx];
+  // ile bieżącego bloku już wypowiedziane: ze słów (advanced) albo z upływu czasu w jego obrębie
+  let spokenFrac = 0;
+  if (cur) {
+    const byWords = spokenCutFromWords(cur.text, cur.words, posSec);
+    spokenFrac =
+      byWords != null && cur.text.length > 0
+        ? byWords / cur.text.length
+        : isFinite(cur.endN) && cur.endN > cur.startN
+          ? (posSec - cur.startN) / (cur.endN - cur.startN)
+          : 0;
+  }
   useEffect(() => {
-    const max = Math.max(0, sizes.current.content - sizes.current.view);
-    const frac = hasSegs ? (rows.length > 1 ? curIdx / (rows.length - 1) : 0) : ratio;
-    scrollRef.current?.scrollTo({ y: max * frac, animated: true });
+    if (!hasSegs) {
+      // bez segmentów jest jeden blok tekstu — zostaje stare, proporcjonalne przewijanie
+      const max = Math.max(0, sizes.current.content - sizes.current.view);
+      scrollRef.current?.scrollTo({ y: max * ratio, animated: true });
+      return;
+    }
+    const g = rowGeom.current.get(curIdx);
+    if (!g || !sizes.current.view) return;
+    const y = transcriptScrollY({
+      rowTop: g.y,
+      rowHeight: g.h,
+      spokenFrac,
+      lineHeight: Math.round(font.monoBody.size * 1.5),
+      viewportH: sizes.current.view,
+      maxScroll: Math.max(0, sizes.current.content - sizes.current.view),
+    });
+    // próg 4 px: karaoke woła to kilka razy na sekundę, a szarpanie o pojedyncze piksele wygląda źle
+    if (Math.abs(y - lastScroll.current) < 4) return;
+    lastScroll.current = y;
+    scrollRef.current?.scrollTo({ y, animated: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pct]);
+  }, [curIdx, spokenFrac, hasSegs, ratio]);
 
   // fallback bez czasów: jeden blok, podział proporcjonalny po znakach
   const text = transcript.text ?? '';
@@ -257,14 +319,18 @@ function TranscriptView({ transcript, ratio, posSec, onSeek }: { transcript: Tra
     <ScrollView
       ref={scrollRef}
       style={{ flex: 1, alignSelf: 'stretch' }}
-      contentContainerStyle={hasSegs ? { gap: 4 } : undefined}
-      onLayout={(e) => { sizes.current.view = e.nativeEvent.layout.height; }}
+      contentContainerStyle={hasSegs ? { gap: 4, paddingBottom: padBottom } : undefined}
+      onLayout={(e) => { sizes.current.view = e.nativeEvent.layout.height; syncPad(); }}
       onContentSizeChange={(_w, h) => { sizes.current.content = h; }}
       showsVerticalScrollIndicator={false}
     >
       {hasSegs ? (
         rows.map((r, i) => (
-          <TranscriptRow key={i} startN={r.startN} endN={r.endN} endLabel={r.endLabel} text={r.text} words={r.words} speaker={r.speaker} posSec={posSec} onSeek={onSeek} />
+          // pomiar wiersza (y/h w układzie treści scrolla) — auto-scroll liczy z niego pozycję,
+          // zamiast zgadywać ją z numeru segmentu
+          <View key={i} onLayout={(e) => { const { y, height } = e.nativeEvent.layout; rowGeom.current.set(i, { y, h: height }); if (i === rows.length - 1) syncPad(); }}>
+            <TranscriptRow startN={r.startN} endN={r.endN} endLabel={r.endLabel} text={r.text} words={r.words} speaker={r.speaker} posSec={posSec} onSeek={onSeek} />
+          </View>
         ))
       ) : (
         <Text style={{ fontFamily: font.monoBody.family, fontSize: font.monoBody.size, lineHeight: Math.round(font.monoBody.size * 1.5) }}>
@@ -448,6 +514,8 @@ export function usePlaybackScreen({
   onToggleTimer?: () => void; // tap timera w playerze → przełącz ELAPSED/REMAINING (PLAYBACK TIMER w Settings)
 }) {
   const { recordings: recs, removeById, insertAt } = store;
+  // wolne miejsce (realne) — odświeżane przy zmianie jakości i liczby nagrań; null → linijki brak
+  const storage = useStorageLabel(quality, recs.length);
   const [rawSel, setSelId] = useState<string>('');
   // selId zawsze ważne (po dodaniu/usunięciu nagrań fallback na pierwsze)
   const selId = recs.some((r) => r.id === rawSel) ? rawSel : recs[0]?.id ?? '';
@@ -464,6 +532,17 @@ export function usePlaybackScreen({
   // do niej nie dojedzie. Bez tego: po seekTo status (currentTime) spóźnia się, więc kolejny prev/next liczy
   // bieżący segment od STAREJ pozycji i celuje w ten sam → nawigacja „stoi w miejscu". (null = brak wymuszenia)
   const [navPos, setNavPos] = useState<number | null>(null);
+  // TOAST — fosforowa pigułka u dołu ekranu (wzorzec z gallery_ai). Używany, gdy joystick wyjdzie
+  // poza transkrypt i zmieni NAGRANIE: sam ekran playera wygląda wtedy identycznie, więc bez nazwy
+  // nie widać, że gra już co innego.
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (msg: string, ms = 2000) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), ms);
+  };
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
   const navFromRef = useRef(0); // pozycja sprzed skoku — by zwolnić navPos gdy odtwarzacz DOJEDZIE do celu z właściwej strony
   const lastDeleted = useRef<{ rec: Rec; index: number; name: string } | null>(null);
   const timers = useRef<{ ret?: any }>({});
@@ -487,25 +566,46 @@ export function usePlaybackScreen({
   // nie ruszało listy). Zaznaczenie zostaje na miejscu — krokowy wybór to domena joysticka.
   const flingRate = useRef(0);
   const flingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const flingLevel = useRef(0); // ostatni „bieg" przewijania (haptyka tylko na wejściu na wyższy)
   const FLING_PX_PER_S = 1100;
+  // Czy w ogóle jest co przewijać. Slider świeci TYLKO wtedy — podświetlona kontrolka bez efektu
+  // obiecuje funkcję, której nie ma (ta sama zasada, co przy wygaszonych ⏪⏩ bez akcji).
+  const [listScrollable, setListScrollable] = useState(false);
+  const syncListScrollable = () => setListScrollable(listContentH.current > listViewport.current + 1);
   const stopFling = () => {
     if (flingTimer.current) { clearInterval(flingTimer.current); flingTimer.current = null; }
+  };
+  // Ciągła wibracja „ściany" — ten sam sygnał, którym player oznacza granicę nagrania.
+  const setListWall = (on: boolean) => {
+    if (on === continuousOn.current) return;
+    hapticContinuous(on);
+    continuousOn.current = on;
   };
   const flingList = (rate: number) => {
     flingRate.current = Math.abs(rate) < 0.15 ? 0 : rate;
     if (flingTimer.current) return;
     flingTimer.current = setInterval(() => {
       const r = flingRate.current;
-      if (!r) return;
+      if (!r) { setListWall(false); flingLevel.current = 0; return; }
       const maxY = Math.max(0, listContentH.current - listViewport.current);
       const next = Math.max(0, Math.min(maxY, listOffset.current + r * FLING_PX_PER_S * 0.06));
-      if (next === listOffset.current) return; // koniec listy — nie spamuj scrollTo
+      if (next === listOffset.current) { // koniec listy — nie spamuj scrollTo, za to daj wyczuć ścianę
+        setListWall(true);
+        flingLevel.current = 0;
+        return;
+      }
+      setListWall(false);
       listOffset.current = next;
       listScrollRef.current?.scrollTo({ y: next, animated: false });
+      // Knob w trybie `onScrub` nie wibruje sam (SeekSlider zostawia to ekranowi) — bez tego lista
+      // przewijała się zupełnie bez czucia, inaczej niż ta sama gałka w playerze.
+      const level = Math.min(3, Math.ceil(Math.abs(r) * 3));
+      if (level > flingLevel.current) hapticKnob(level / 3);
+      flingLevel.current = level;
     }, 60);
   };
-  const flingEnd = () => { flingRate.current = 0; stopFling(); };
-  useEffect(() => () => stopFling(), []);
+  const flingEnd = () => { flingRate.current = 0; stopFling(); setListWall(false); flingLevel.current = 0; };
+  useEffect(() => () => { stopFling(); if (continuousOn.current) { hapticContinuous(false); continuousOn.current = false; } }, []);
 
   const idx = Math.max(0, recs.findIndex((r) => r.id === selId));
   const sel: Rec | undefined = recs[idx];
@@ -537,10 +637,19 @@ export function usePlaybackScreen({
   // realny odtwarzacz pliku (gdy nagranie ma uri); demo (bez uri) = mock niżej. Web → stub no-op.
   const { player, status: pstatus } = usePlayer();
   const realMode = view === 'PLAYER' && !!sel?.uri;
+  // Skąd otwarto czat — decyduje, dokąd wraca BACK (lista vs odtwarzacz).
+  const chatFrom = useRef<'LIST' | 'PLAYER'>('PLAYER');
   // Powrót z czatu → ODŚWIEŻ player (replace + seek do bieżącej pozycji), zamiast tylko przełączyć widok.
   // Po ASK AI (a zwłaszcza po pytaniu głosem) sesja/stan odtwarzacza bywał zepsuty — PLAY nie wznawiał
   // i status bywał nieaktualny. Świeży player przywraca grywalny stan i poprawne pstatus (paused od nowa).
   const backFromChat = () => {
+    // Wracamy TAM, SKĄD weszliśmy. ASK AI da się odpalić z menu nagrania na LIŚCIE (bez otwierania
+    // odtwarzacza) — wracanie stamtąd „przez" widok transkryptu pokazywało ekran, którego użytkownik
+    // nigdy nie widział, i wymagało drugiego BACK, żeby wrócić do listy.
+    if (chatFrom.current === 'LIST') {
+      setView('LIST');
+      return;
+    }
     setView('PLAYER');
     if (sel?.uri) {
       try {
@@ -613,6 +722,11 @@ export function usePlaybackScreen({
   // ── PLAYER/CHAT: wczytaj transkrypt zaznaczonego nagrania (gdy transcribed) → wariant z tekstem ──
   // CHAT należy do tej samej notatki — NIE czyścimy transkryptu na PLAYER↔CHAT, inaczej po powrocie z ASK AI
   // przez ułamek sekundy widać player BEZ transkrypcji (reload async). Czyścimy tylko poza player/chat (LIST).
+  // `transcriptRev` rośnie przy KAŻDYM zapisie transkryptu tego nagrania (bazowy wynik, rozmówcy,
+  // akapity, imiona). Bez niego widok trzymał wersję wczytaną w chwili otwarcia: podział z tła
+  // dolatywał do bazy, ale na ekranie nie było go widać — a po RE-TRANSCRIBE nie zmieniało się NIC,
+  // bo `transcribed` było już true i efekt w ogóle się nie odpalał.
+  const transcriptRev = transcription?.revOf(sel?.id) ?? 0;
   useEffect(() => {
     let alive = true;
     if ((view === 'PLAYER' || view === 'CHAT') && sel?.transcribed && sel?.id) {
@@ -628,7 +742,7 @@ export function usePlaybackScreen({
     return () => {
       alive = false;
     };
-  }, [view, sel?.id, sel?.transcribed]);
+  }, [view, sel?.id, sel?.transcribed, transcriptRev]);
 
   // ── wybór na liście ──
   const selectRec = (id: string) => {
@@ -760,16 +874,32 @@ export function usePlaybackScreen({
     const i = SPEED_LEVELS.indexOf(speed);
     const next = SPEED_LEVELS[(i + 1) % SPEED_LEVELS.length];
     setSpeed(next);
+    // Klawisz pokazuje bieżącą prędkość, ale wzrok jest wtedy na transkrypcie, nie na klawiaturze —
+    // toast mówi wprost, co się właśnie zmieniło.
+    showToast(`${next}X SPEED`);
     if (sel?.uri) {
       try {
         player.setPlaybackRate(next);
       } catch {}
     }
   };
+  /** Przytrzymanie klawisza prędkości → powrót do 1×, bez przeklikiwania całego cyklu. */
+  const resetSpeed = () => {
+    if (speed === 1) return;
+    setSpeed(1);
+    showToast('1X SPEED');
+    if (sel?.uri) {
+      try {
+        player.setPlaybackRate(1);
+      } catch {}
+    }
+  };
+
   const playerSkip = (d: -1 | 1) => {
     const n = recs.length;
     if (!n) return;
     const target = recs[(idx + d + n) % n]; // cyklicznie
+    showToast(displayName(target, recs));
 
     setSelId(target.id);
     setPos(0);
@@ -866,7 +996,7 @@ export function usePlaybackScreen({
       return true;
     }
     if (view === 'CHAT') {
-      backFromChat(); // systemowy BACK z czatu → odśwież player (jak klawisz BACK)
+      backFromChat(); // systemowy BACK z czatu → tam, skąd weszliśmy (lista / odświeżony player)
       return true;
     }
     if (view === 'PLAYER') {
@@ -899,14 +1029,14 @@ export function usePlaybackScreen({
     const segList = transcript?.segments ?? [];
     const hasSegNav = !!sel?.transcribed && segList.length > 0;
     const deleteKey = { label: 'DELETE', supporting: '[HOLD]', variant: 'risk' as const, onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 };
-    // joystick w PLAYER — gramatyka jak wszędzie: ↑↓ = pozycja na LIŚCIE nagrań (poprzednie/następne),
-    // ←→ = ruch WEWNĄTRZ nagrania (seek ±5 s), środek = ZATWIERDŹ, czyli play/pause bieżącego nagrania.
-    // Grzybek metalowy — tu nic nie nagrywa. (playerSkip/seekToSec zdefiniowane niżej — arrow wywoła je
-    // dopiero na gest, po inicjalizacji.)
+    // joystick w PLAYER — ↑↓ = krok po TREŚCI: najpierw wydzielone fragmenty transkryptu, a dopiero
+    // na jego skraju poprzednie/następne nagranie (patrz playerStep). ←→ = ruch wewnątrz nagrania
+    // (seek ±5 s), środek = ZATWIERDŹ, czyli play/pause. Grzybek metalowy — tu nic nie nagrywa.
+    // (playerStep/seekToSec zdefiniowane niżej — arrow wywoła je dopiero na gest, po inicjalizacji.)
     const joyPlayer = {
       highlighted: true,
-      onUp: () => playerSkip(-1),
-      onDown: () => playerSkip(1),
+      onUp: () => playerStep(-1),
+      onDown: () => playerStep(1),
       onLeft: () => seekToSec(uiPos - JOY_SEEK_S, playing),
       onRight: () => seekToSec(uiPos + JOY_SEEK_S, playing),
       onPress: () => playerPlayPause(),
@@ -924,12 +1054,25 @@ export function usePlaybackScreen({
         screen: [
           deleteKey,
           sel?.transcribed && sel?.uri
-            ? { label: 'ASK\nAI', variant: 'primary' as const, onPress: () => { haltPlayer(); setView('CHAT'); } }
+            ? { label: 'ASK\nAI', variant: 'primary' as const, onPress: () => { haltPlayer(); chatFrom.current = 'PLAYER'; setView('CHAT'); } }
             : sel?.uri && !sel?.transcribed
               ? { label: 'TRANS-\nCRIBE', onPress: transcribe }
               : { label: '' },
           // gra → prędkość odtwarzania z pierścieniem biegu (1×/1.5×/2×/3×); pauza/stop → wolny slot (BACK jest na metalu)
-          playing ? { label: `${speed}X\nSPEED`, icon: SPEED_ICON[speed], supporting: '[CYCLE]', onPress: cycleSpeed, progress: speedFill(speed) } : { label: '' },
+          playing
+            ? {
+                label: `${speed}X\nSPEED`,
+                icon: SPEED_ICON[speed],
+                supporting: '[CYCLE]',
+                onPress: cycleSpeed,
+                progress: speedFill(speed),
+                // przytrzymanie = powrót do 1×. Świadomie 1 s, czyli DWA RAZY KRÓCEJ niż kasowanie
+                // nagrania (2 s): tam hold chroni przed nieodwracalną stratą, tu tylko wraca do
+                // normalnej prędkości — dłuższe trzymanie byłoby karą za zwykłą korektę.
+                onHoldComplete: resetSpeed,
+                holdMs: 1000,
+              }
+            : { label: '' },
         ],
         metal: [
           // gra/pauza → STOP (stop+seek0); zatrzymany → BACK (do listy)
@@ -1047,14 +1190,12 @@ export function usePlaybackScreen({
     // next → początek następnego; prev → restart bieżącego (gdy >2 s w środku) lub poprzedni.
     // Ustawiamy navPos = cel: highlight/scroll skacze OD RAZU, a kolejny prev/next liczy od celu, nie od
     // spóźnionego currentTime — dzięki temu nawigacja krok-po-kroku działa nawet gdy status się spóźnia/nie gra.
-    const gotoSegment = (dir: -1 | 1) => {
+    // Zwraca, CZY udało się przeskoczyć: false = jesteśmy na skraju transkryptu. Joystick czyta to
+    // jako „koniec treści" i dopiero wtedy zmienia nagranie.
+    const gotoSegment = (dir: -1 | 1): boolean => {
       const starts = segList.map((s) => s.start ?? 0);
-      if (!starts.length) return;
-      let ci = 0;
-      for (let i = 0; i < starts.length; i++) if (uiPos >= starts[i] - 0.05) ci = i;
-      const raw = dir === 1
-        ? starts[Math.min(starts.length - 1, ci + 1)]
-        : uiPos - starts[ci] > 2 ? starts[ci] : starts[Math.max(0, ci - 1)];
+      const raw = segmentStep(starts, uiPos, dir);
+      if (raw == null) return false;
       // clamp do długości audio: sparsowany start segmentu (halucynowany ogon Whispera) bywa > realnej
       // długości pliku → bez tego currentTime nigdy nie dojedzie i navPos zamroziłby highlight/timer.
       const target = uiLen > 0 ? Math.max(0, Math.min(uiLen, raw)) : Math.max(0, raw);
@@ -1067,16 +1208,29 @@ export function usePlaybackScreen({
         setPos(target);
         setPlayerState('PLAYING');
       }
+      return true;
+    };
+    /**
+     * Joystick ↑↓ w playerze: NAJPIERW treść, potem nagrania. Dopóki transkrypt ma dokąd skoczyć,
+     * gałka chodzi po wydzielonych fragmentach; dopiero na jego skraju przechodzi do sąsiedniego
+     * nagrania — z toastem, bo inaczej zmiana nagrania byłaby nieodróżnialna od kolejnego skoku
+     * w obrębie tego samego (ekran wygląda tak samo, a nazwa pliku siedzi w drobnym podpisie).
+     */
+    const playerStep = (dir: -1 | 1) => {
+      if (hasSegNav && gotoSegment(dir)) return;
+      playerSkip(dir);
     };
     // Slider = kontrolka ANALOGOWA: knob to shuttle (płynne przewijanie taśmy o zmiennej prędkości).
-    // Przyciski ⏪⏩ skaczą po SEGMENTACH transkryptu (ruch po treści) — świecą tylko gdy transkrypt
-    // istnieje. Krokowe „poprzednie/następne nagranie" należy do joysticka, więc się tu nie powtarza.
+    // Przyciski ⏪⏩ zmieniają NAGRANIE (poprzednie/następne, z toastem) — jak na dyktafonie, gdzie
+    // ta para przeskakuje ścieżki. Ruch po TREŚCI (fragmenty transkryptu) należy do joysticka ↑↓,
+    // więc się tu nie powtarza. Świecą tylko gdy jest na co przeskoczyć (≥2 nagrania).
+    const canSwitchRec = recs.length > 1;
     const slider: SliderConfig | undefined = loading
       ? undefined
       : {
           highlighted: true,
-          onPrev: hasSegNav ? () => gotoSegment(-1) : undefined,
-          onNext: hasSegNav ? () => gotoSegment(1) : undefined,
+          onPrev: canSwitchRec ? () => playerSkip(-1) : undefined,
+          onNext: canSwitchRec ? () => playerSkip(1) : undefined,
           onScrub,
           onScrubEnd,
         };
@@ -1121,13 +1275,14 @@ export function usePlaybackScreen({
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                   <Text style={capStyle}>{nameSize}</Text>
-                  <Text style={capStyle}>~311h/32.3GB AVAILABLE</Text>
+                  {storage ? <Text style={capStyle}>{storage}</Text> : null}
                 </View>
               </>
             )}
           </View>
         </View>
         <BottomBar active={playing} mono={mono} quality={quality} muted={false} level={sel?.samples && uiLen > 0 ? sel.samples[Math.min(sel.samples.length - 1, Math.floor((uiPos / uiLen) * sel.samples.length))] : null} />
+        <Toast text={toast} />
       </>
     );
     return { content, keyboard, slider, goBack };
@@ -1163,7 +1318,7 @@ export function usePlaybackScreen({
   const menuOptions: RowActionDef[] = sel
     ? [
         ...(sel.uri && !sel.transcribed ? [{ label: 'TRANSCRIBE', run: transcribe }] : []),
-        ...(sel.uri && sel.transcribed ? [{ label: 'ASK AI', run: () => { haltPlayer(); setView('CHAT'); } }] : []),
+        ...(sel.uri && sel.transcribed ? [{ label: 'ASK AI', run: () => { haltPlayer(); chatFrom.current = 'LIST'; setView('CHAT'); } }] : []),
         ...(sel.uri && sel.transcribed ? [{ label: 'RE-TRANSCRIBE', run: retranscribe, keyLabel: 'RE-TRANS-\nCRIBE' }] : []),
         ...(sel.uri ? [{ label: 'SHARE', run: () => { shareRecording(sel.uri, displayName(sel, recs)); } }] : []),
         { label: 'DETAILS', run: () => setPhase('DETAILS'), keyLabel: 'SHOW DETAILS' },
@@ -1251,10 +1406,11 @@ export function usePlaybackScreen({
   }
 
   // Slider na liście = kontrolka ANALOGOWA: knob przewija widok listy płynnie (im dalej wychylony, tym
-  // szybciej), a zaznaczenie zostaje tam, gdzie było — krokowy wybór nagrania należy do joysticka.
-  // Przyciski ⏪⏩ wygaszone (nie mają tu analogowego znaczenia).
+  // szybciej, z haptyką biegów i ścianą na końcu), a zaznaczenie zostaje tam, gdzie było — krokowy
+  // wybór nagrania należy do joysticka. Przyciski ⏪⏩ wygaszone (nie mają tu analogowego znaczenia).
+  // Podświetlenie zależy od tego, czy lista w ogóle wychodzi poza szybę.
   const slider: SliderConfig | undefined =
-    phase === 'LIST' ? { highlighted: true, onScrub: flingList, onScrubEnd: flingEnd } : undefined;
+    phase === 'LIST' ? { highlighted: listScrollable, onScrub: flingList, onScrubEnd: flingEnd } : undefined;
 
   const content = (
     <>
@@ -1267,8 +1423,8 @@ export function usePlaybackScreen({
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
           onScroll={(e) => { listOffset.current = e.nativeEvent.contentOffset.y; }}
-          onLayout={(e) => { listViewport.current = e.nativeEvent.layout.height; }}
-          onContentSizeChange={(_w, h) => { listContentH.current = h; }}
+          onLayout={(e) => { listViewport.current = e.nativeEvent.layout.height; syncListScrollable(); }}
+          onContentSizeChange={(_w, h) => { listContentH.current = h; syncListScrollable(); }}
         >
           {/* DETAILS ma własny scrim (jak INFO) → NIE przyciemniaj listy, inaczej podwójne ciemne tło.
               CONFIRM/DELETED mają pełny panel → dim listy zostaje. */}

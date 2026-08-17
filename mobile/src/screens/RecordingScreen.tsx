@@ -11,11 +11,13 @@ import type { KeyboardConfig } from '../components/chrome/Keyboard';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
 import { useAudioCapture } from '../hooks/useAudioCapture';
 import type { Rec } from '../hooks/useRecordings';
+import type { Engine } from '../lib/types';
 import { genericName, nextSeq } from '../hooks/useRecordings';
 import { deriveAiStatus, type TranscriptionStore } from '../hooks/useTranscription';
 import { persistRecording } from '../lib/recordingFiles';
 import { uuidv4 } from '../lib/uuid';
 import { hapticRecordStart, hapticRecordStop } from '../lib/haptics';
+import { useStorageLabel } from '../hooks/useStorage';
 
 // redukcja obwiedni do N słupków (peak w każdym przedziale)
 const downsample = (arr: number[], n: number): number[] => {
@@ -120,6 +122,8 @@ function PausedBanner() {
 
 export function useRecordingScreen({
   aiEnabled,
+  language,
+  engine,
   mono = false,
   quality = 'HIGH',
   mode = 'RECORDING',
@@ -132,6 +136,10 @@ export function useRecordingScreen({
   transcription,
 }: {
   aiEnabled: boolean;
+  // AUTO TRANSCRIBE musi zlecać TYM SAMYM silnikiem i językiem co ręczne TRANS-CRIBE w playerze —
+  // inaczej ustawienie ADVANCED nie działa dla nagrań transkrybowanych automatycznie (a to domyślna ścieżka).
+  language?: string;
+  engine?: Engine;
   mono?: boolean;
   quality?: 'HIGH' | 'LOW'; // COMPRESSION → bitrate nagrywania (HIGH [BIG] / LOW [SMALL])
   mode?: Mode;
@@ -145,6 +153,9 @@ export function useRecordingScreen({
   transcription?: TranscriptionStore;
 }) {
   const capture = useAudioCapture();
+  // wolne miejsce: przelicza się przy zmianie jakości (inny bitrate → inne godziny) i po każdym
+  // przybyciu/ubyciu nagrania; null = nie dało się odczytać → linijki po prostu nie ma
+  const storage = useStorageLabel(quality, recordings.length);
   // nazwa pliku, który teraz powstaje: generyczna z dzisiejszej daty + kolejny numer dnia
   const recDate = today();
   const recSeq = nextSeq(recordings, recDate);
@@ -287,7 +298,7 @@ export function useRecordingScreen({
     setLastSavedId(id);
     onSave?.(rec);
     // AUTO TRANSCRIBE: od razu realna transkrypcja (tylko gdy mamy plik — natywnie)
-    if (aiEnabled && uri) transcription?.start(rec);
+    if (aiEnabled && uri) transcription?.start(rec, { language, engine });
   };
   const stop = () => {
     setAbortedFlash(false);
@@ -409,13 +420,13 @@ export function useRecordingScreen({
           {state === 'RECORDING' || state === 'PAUSED' ? (
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignSelf: 'stretch' }}>
               <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>{recName}</Text>
-              <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>~311h/32.3GB AVAILABLE</Text>
+              {storage ? <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>{storage}</Text> : null}
             </View>
-          ) : (
+          ) : storage ? (
             <View style={{ flexDirection: 'row', justifyContent: 'center', alignSelf: 'stretch' }}>
-              <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>~311h/32.3GB AVAILABLE</Text>
+              <Text style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: tintSecondary }}>{storage}</Text>
             </View>
-          )}
+          ) : null}
         </View>
       </View>
       <BottomBar active={state === 'RECORDING'} mono={mono} quality={quality} muted={false} level={capture.level} />

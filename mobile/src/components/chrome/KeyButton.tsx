@@ -4,7 +4,7 @@
  * i "metal" (#BABABA, dolny rząd 4-6, transport ze zmiennym podświetleniem).
  * W środku okrągła "miska": wklęsła (reduction) lub wypukła (elevation).
  */
-import { ReactNode, useRef, useEffect } from 'react';
+import { ReactNode, useRef, useEffect, useState } from 'react';
 import { Pressable, View, Text, GestureResponderEvent, Animated } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,11 +25,29 @@ const LABEL_ICON: Record<string, KeyIconName> = {
   UNDO: 'undo', DELETE: 'delete', 'KEY-\nBOARD': 'keyboard', SAVE: 'save', RESET: 'reset',
   // ikony specyficzne dla dyktafonu (Figma 496:24601, dodane 2026-07-24)
   SETTINGS: 'settings', STOP: 'stop', PAUSE: 'pause', MUTE: 'mute', UNMUTE: 'unmute',
-  DETAILS: 'details', TASKS: 'to_do_list', SUMMARY: 'summary', 'SUM-\nMARY': 'summary',
+  // SHOW DETAILS dostaje „i" w kółku, a nie lupę nad listą (`details`): na liście nagrań ta akcja
+  // otwiera metryczkę pliku, czyli klasyczne INFO — i tak ją czyta oko.
+  DETAILS: 'details', 'SHOW DETAILS': 'info', 'SHOW INFO': 'info',
+  TASKS: 'to_do_list', SUMMARY: 'summary', 'SUM-\nMARY': 'summary',
   'KEY POINTS': 'ai_key_points', 'KEY\nPOINTS': 'ai_key_points',
-  TRANSCRIBE: 'transcribe', 'TRANS-\nCRIBE': 'transcribe',
-  RECORDINGS: 'recordings', 'RECORD-\nINGS': 'recordings',
+  // TRANSCRIBE dostaje chip „AI", a nie mikrofon z linijkami (`transcribe`): klawisz zleca pracę
+  // modelowi, a nie nagrywa — a mikrofon myli się z nagrywaniem, które w tej apce jest osobną akcją.
+  TRANSCRIBE: 'ai', 'TRANS-\nCRIBE': 'ai',
+  'RE-TRANSCRIBE': 'ai', 'RE-TRANS-\nCRIBE': 'ai',
+  // lista nagrań = recordings_2 (wybór autora), samo urządzenie/nagrywanie = recorder
+  RECORDINGS: 'recordings_2', 'RECORD-\nINGS': 'recordings_2', REC: 'recorder',
+  // Przełącznik w ustawieniach. Klawisz #1 pokazuje WARTOŚĆ, NA KTÓRĄ przełączy (ta sama zasada, co
+  // przy THEME czy PLAYBACK TIMER), więc: „TURN ON" → gałka w prawo, „TURN OFF" → gałka w lewo.
+  'TURN ON': 'toggle_right', 'TURN OFF': 'toggle_left',
   'ASK AI': 'ai_chat', 'ASK\nAI': 'ai_chat',
+  // wartość „na którą przełączy" w wierszu VIEW ma swoją ikonę; DEVICE zostaje tekstem, bo nie ma
+  FULLSCREEN: 'fullscreen', 'FULL-\nSCREEN': 'fullscreen',
+  // wartości wierszy, które mają WŁASNE ikony (a nie jedną wspólną dla całego wiersza) — glif mówi
+  // dokładnie to samo co słowo, więc w trybie KEY ICONS nic nie ginie
+  ELAPSED: 'elapsed', REMAINING: 'remaining', 'REMAIN-\nING': 'remaining',
+  RIGHT: 'handed_right', LEFT: 'handed_left',
+  // domyślna etykieta klawisza #1 w ustawieniach (gdy wiersz nie ma nic lepszego do pokazania)
+  CHANGE: 'change',
   // SPEED: ikona zależna od biegu — patrz jawny `icon` na klawiszu w PlaybackScreen (speed_1x…10x).
 };
 import { ScreenMatrix } from './ScreenMatrix';
@@ -318,8 +336,12 @@ export function ScreenKey({
     },
     []
   );
+  // czy trwa przytrzymanie — na czas holdu chowamy statyczny pierścień (np. bieg SPEED), żeby
+  // pierścień postępu był jedyną rzeczą, jaką widać; po zakończeniu wraca sam
+  const [holding, setHolding] = useState(false);
   const startHold = () => {
     completed.current = false;
+    setHolding(true);
     onHoldStart?.(); // np. UNDO: reset okna auto-zamknięcia, żeby zdążyć dokończyć hold
     progress.setValue(0);
     Animated.timing(progress, { toValue: 1, duration: holdMs, useNativeDriver: false }).start();
@@ -328,13 +350,15 @@ export function ScreenKey({
       completed.current = true;
       onHoldComplete?.();
       hapticRelease(); // mocny impuls potwierdzający wykonanie
-      progress.setValue(0);
+      // pierścień COFA SIĘ do stanu początkowego, zamiast znikać skokiem — akcja się wykonała,
+      // więc kontrolka ma wrócić do spoczynku w sposób widoczny, a nie zgasnąć w jednej klatce
+      Animated.timing(progress, { toValue: 0, duration: 250, useNativeDriver: false }).start(() => setHolding(false));
     }, holdMs);
   };
   const cancelHold = () => {
     clearTimeout(holdTimer.current);
     progress.stopAnimation();
-    Animated.timing(progress, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(progress, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => setHolding(false));
     if (!completed.current) hapticCancel(); // puszczono przed końcem → przerwij wibrację
   };
   // pierścień hold: na ciemnym tekście (primary/highRisk = jasne/czerwone tło) ciemny; risk = czerwony; reszta phosphor
@@ -360,7 +384,7 @@ export function ScreenKey({
       onPressOut={onHoldComplete ? cancelHold : undefined}
     >
       {onHoldComplete ? <ProgressRing progress={progress} ringColor={ringColor} dot={!!(icons && iconName)} /> : null}
-      {progressFraction != null ? <StaticRing fraction={progressFraction} ringColor={ringColor} dot={!!(icons && iconName)} /> : null}
+      {progressFraction != null && !holding ? <StaticRing fraction={progressFraction} ringColor={ringColor} dot={!!(icons && iconName)} /> : null}
       {icons && iconName ? (
         // TRYB IKON: sam glif wyśrodkowany; support (np. [HOLD]) NIE jest tekstem — zastępuje go kropka
         // na starcie pierścienia (patrz ProgressRing/StaticRing `dot`).

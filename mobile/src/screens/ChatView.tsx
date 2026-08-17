@@ -19,6 +19,7 @@ import type { AiStatusView } from '../hooks/useTranscription';
 import { useAudioCapture } from '../hooks/useAudioCapture';
 import * as api from '../lib/api';
 import { deleteRecordingFile } from '../lib/recordingFiles';
+import { useStorageLabel } from '../hooks/useStorage';
 
 // Presety pytań per język (label klawisza stały; treść pytania w wybranym języku).
 const PRESETS_BY_LANG: Record<string, { label: string; q: string }[]> = {
@@ -118,6 +119,8 @@ export function useChatView({
   onBack?: () => void;
 }) {
   const chat = useChat(active ? rec?.id : undefined, language);
+  // wolne miejsce (realne) — ta sama etykieta co w nagrywaniu i playerze; null → linijki brak
+  const storage = useStorageLabel(quality);
   const PRESETS = PRESETS_BY_LANG[language] ?? PRESETS_BY_LANG.en;
   const welcome = WELCOME_BY_LANG[language] ?? WELCOME_BY_LANG.en;
   const capture = useAudioCapture();
@@ -334,7 +337,7 @@ export function useChatView({
         {/* nazwa (+rozmiar) i wolne miejsce w JEDNEJ linii (Figma 289:6298) — nazwa lewo, storage prawo */}
         <View style={{ alignSelf: 'stretch', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, paddingVertical: 8 }}>
           <Text numberOfLines={1} style={{ flexShrink: 1, fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>{nameLabel}</Text>
-          <Text numberOfLines={1} style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>~311h/32.3GB AVAILABLE</Text>
+          {storage ? <Text numberOfLines={1} style={{ fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary }}>{storage}</Text> : null}
         </View>
       </View>
       <BottomBar active={voice === 'listening'} mono={mono} quality={quality} muted={false} level={voice === 'listening' ? capture.level : null} />
