@@ -62,7 +62,11 @@ Collected informally — messenger threads, phone calls and screenshots; no surv
 > kupy razem z historią wersji, którą Google widzi. Podmień punkty na te, które faktycznie
 > dostałeś.
 
-## 5. Co zmieniłeś po opiniach (300) — pytanie zwykle następne
+## 5. Co zmieniłeś po opiniach (300)
+
+> ⚠️ To pytanie pojawia się w formularzu **drugi raz**, w sekcji „Gotowość do etapu
+> produkcyjnego" (punkt 10 niżej). **Nie wklejaj dwa razy tego samego tekstu** — recenzent widzi
+> oba pola obok siebie. Tutaj podsumuj krótko, a konkrety zostaw do punktu 10 (albo odwrotnie).
 
 ```
 Every point became a release. The waveform now scales to the last seconds of audio, speakers get name initials taken from the conversation (Marc → MRC), long transcripts are split into timestamped paragraphs, and free space is computed from the real bitrate. Current build: 0.988.
@@ -124,6 +128,52 @@ Wybierz **najniższy realny przedział** (dla pierwszego wydania bez budżetu ma
 `0–1000`, ewentualnie `1000–10 000`, jeśli masz konkretny kanał dotarcia). To pytanie badawcze —
 Google zbiera nim skalę, a nie ocenia ambicję. Zawyżony przedział niczego nie ułatwia, a przy
 świeżym koncie bez historii wygląda niespójnie z resztą wniosku.
+
+---
+
+# Sekcja „Gotowość do etapu produkcyjnego"
+
+## 10. Jakie zmiany wprowadziłeś na podstawie testu zamkniętego? (300)
+
+```
+Four things testers flagged. The waveform now scales to recent audio instead of sitting at the top. Speakers show name initials taken from the conversation (Marc → MRC) instead of numbers. Long transcripts are split into timestamped paragraphs. Free space is real, not a fixed line.
+```
+**282 / 300**
+
+**Wariant, jeśli chcesz pokazać też naprawiony błąd (mocniejszy — usterka brzmi wiarygodniej
+niż same ulepszenia):**
+```
+The waveform now scales to recent audio instead of pinning at the top; speakers show name initials from the conversation (Marc → MRC) instead of numbers; long transcripts are split into timestamped paragraphs; free space is real. A bug where auto-transcription ignored the AI settings was fixed.
+```
+**295 / 300**
+
+> Ta czwórka ma pokrycie w realnych wydaniach: skalowanie waveformu, 0.976 (imiona rozmówców),
+> 0.978 (akapity + poprawka AUTO TRANSCRIBE ignorującego AI ENGINE i AI LANGUAGE), 0.975
+> (realne wolne miejsce). Jeśli Twoi testerzy zgłaszali co innego — podmień, ale zostaw ten
+> kształt: **konkretna obserwacja → konkretna zmiana**, bez „improved performance and fixed bugs".
+
+## 11. Skąd wiesz, że aplikacja jest gotowa na produkcję? (300)
+
+```
+No crashes were reported by testers and none appear in my own runs. Every build is verified end to end before upload: record, transcribe on both engines, ask the AI about the note. The privacy policy is live and matches what the code sends, and Data safety matches it too.
+```
+**272 / 300**
+
+**Wariant kładący nacisk na stabilność zakresu (dobry, jeśli miałeś zgłoszenia awarii i nie
+chcesz twierdzić, że ich nie było):**
+```
+The feature set has been stable for the last releases — recent work only refined the transcript view, not the core. The closed test produced no crash reports, and each build is checked end to end against the production backend before upload. Remaining ideas are additions, not fixes.
+```
+**283 / 300**
+
+> ⚠️ Zdanie o braku awarii wpisz **tylko jeśli to prawda** — sprawdź wcześniej Android vitals
+> w Console; Google ma te dane i zestawi je z odpowiedzią. Jeśli awarie były, napisz wprost,
+> co je powodowało i w którym wydaniu zniknęły; to wygląda lepiej niż zaprzeczenie.
+>
+> Reszta tej odpowiedzi jest weryfikowalna po Twojej stronie: każdy build 0.988 był sprawdzany
+> na urządzeniu (nagranie → transkrypcja STANDARD i ADVANCED → czat) oraz bezpośrednio na
+> produkcyjnym backendzie, a polityka prywatności pod linkiem ze sklepu jest zgodna z tym, co
+> kod naprawdę wysyła (szczegóły w `DEPLOY_0.988.md`).
 
 ---
 
