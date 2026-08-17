@@ -155,6 +155,19 @@ To zamyka jedyne realne ryzyko wydania (martwe AI przez brak klucza w bundlu) **
    `httpx.HTTPStatusError` wkleja do komunikatu URL żądania — czyli PRESIGNED `result_url`
    do artefaktu z transkryptem; ten sam string wracał do klienta w 502. Naprawione (`d887f8f`),
    wdrożone i przetestowane na produkcji (401 bez klucza, 200 na obu silnikach, czat 200).
+
+   Trzecia tura (`c62519e`, po przeglądzie kodu): pierwsza poprawka logów **nie zamykała
+   dziury**. Starlette po wywołaniu handlera podnosi wyjątek dalej, więc uvicorn i tak logował
+   pełny komunikat — a `ResponseValidationError` niesie w `input` treść transkryptu. Wchodzi
+   `ContentSafeErrorMiddleware`, który zatrzymuje wyjątek przed `ServerErrorMiddleware` i loguje
+   typ + same ramki stosu. Doszły też: rzutowanie wszystkich pól tekstowych parsera (nie tylko
+   czasów), odsianie `inf`/`nan`, naprawa kolejności fallbacku na `timestamp` i sensowna
+   diagnostyka nieudanego pobrania wyniku (kod HTTP + host, bez ścieżki i query).
+
+   ⚠️ Metodyczna pułapka na przyszłość: **na Windows ten wyciek jest niewidoczny** (traceback
+   nie trafia na wyjście, a serwer po wyjątku przestaje przyjmować połączenia). Test
+   `backend/tools/check_log_privacy.py` trzeba puszczać na Linuksie (WSL/Docker) — tam był
+   czerwony przed poprawką i jest zielony po.
 2. ✅ **Dymny test wykonany przed uploadem** — sekcja 4.1.
 3. ✅ **`store/STORE_LISTING_EN.md` przepisany** dla `Rec+` 0.988: nazwa, opis pełny (3977/4000),
    „What's new" (476/500), Data safety z pełną listą uprawnień z AAB. Każde zdanie oparte na
