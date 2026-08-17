@@ -80,8 +80,12 @@ async def deapi_webhook(
                 fetched = await request.app.state.deapi.fetch_result_url(result_url)
                 parsed = parse_transcript_payload(fetched)
             except Exception as e:  # noqa: BLE001 — log metadanych, nie blokujemy webhooka
-                log.warning("deapi_result_fetch_failed", request_id=request_id, error=str(e))
-                delivered = waiters.resolve(request_id, {"error": f"result fetch failed: {e}"})
+                # NIE loguj str(e) ani nie odbijaj go do klienta: httpx.HTTPStatusError skleja
+                # komunikat z URL-em żądania, a `result_url` jest PRESIGNED — to jednorazowe
+                # poświadczenie do artefaktu z transkryptem. W logu (i w odpowiedzi 502) wylądowałby
+                # link do treści, co przeczy obietnicy „metadane bez treści". Zostaje typ wyjątku.
+                log.warning("deapi_result_fetch_failed", request_id=request_id, error_type=type(e).__name__)
+                delivered = waiters.resolve(request_id, {"error": f"result fetch failed: {type(e).__name__}"})
                 return {"ok": True}
 
     delivered = waiters.resolve(request_id, parsed)

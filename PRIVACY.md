@@ -61,9 +61,14 @@ deAPI's, OpenRouter's, and Railway's policies for where and how they process dat
 > depending on what you say. Avoid recording content you would not want processed by
 > the AI providers listed above.
 
+If you use the **SHARE** action on a note, the App hands the audio file to whichever app you
+pick (messaging, mail, cloud storage). That transfer is initiated by you and goes directly
+from your device to that app; what happens to the file afterwards is governed by that app's
+privacy policy, not this one.
+
 ## 4. Where and how long we keep data
 - **On your device:** recordings, transcripts and chat messages are kept locally until you **delete** them in the App or **uninstall** the App. Deleting a note removes it from the App immediately (its transcript and chat go with it); the audio file itself is kept a little longer so that **UNDO** can bring the note back, and is erased the next time the App starts.
-- **On the server:** content is **not permanently stored** and is never written to a database — it is processed transiently for the duration of the request. A finished transcript stays in the server's memory for **up to about 25 minutes** and is then deleted automatically. Content-free technical metadata may appear short-term in server logs.
+- **On the server:** content is **not permanently stored** and is never written to a database — it is processed transiently for the duration of the request. A finished transcript stays in the server's memory for **up to about 25 minutes** and is then deleted automatically. Content-free technical metadata may appear in our hosting provider's server logs and is kept according to that provider's log-retention policy.
 - **At the AI providers:** retention is governed by each provider's own policy.
 
 ## 5. Legal bases for processing (GDPR — EU/EEA/UK users)
