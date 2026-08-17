@@ -126,6 +126,9 @@ export default function App() {
     onConsumePending: () => setPendingPlay(null),
     recordingsRequest: recordingsReq,
     onToggleTimer: () => settings.cycleByLabel('PLAYBACK TIMER'), // tap timera w playerze ↔ ELAPSED/REMAINING (Settings)
+    // zdarzenia playera („2X SPEED", nazwa notatki) trafiają do TEJ SAMEJ pigułki, co komunikaty
+    // transkrypcji — dwie warstwy toastów leżałyby na sobie w tym samym miejscu ekranu
+    onToast: (text: string, ms?: number) => showAiToast(text, 'phosphor', ms),
   });
   // tryb pisania w czacie wymusza fullscreen + schowaną dolną obudowę; po wyjściu wraca do ustawienia użytkownika
   const variant = settings.fullscreen || chatTyping ? 'fullscreen' : 'device';

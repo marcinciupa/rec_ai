@@ -9,8 +9,9 @@ import Svg, { Path, Rect, Circle, G } from 'react-native-svg';
 import { screen } from '../../theme/tokens';
 import { KEY_ICONS, type IconEl, type KeyIconName } from './keyIcons.gen';
 
-// Grubość ścieżki ikony w siatce 32×32 (Figma dawała 4). 3,8 — wspólna wartość dla rec_ai i gallery_ai,
-// żeby ikonografia obu apek wyglądała identycznie. Przy renderze 26 px daje ~3,09 px na ekranie.
+// Grubość ścieżki ikony w siatce 32×32 (Figma dawała 4). 3,6 — wspólna wartość dla rec_ai i gallery_ai,
+// żeby ikonografia obu apek wyglądała identycznie (przy zmianie: gallery_ai/src/components/icons/KeyIcon.tsx
+// trzyma tę samą stałą). Przy renderze 26 px daje ~2,9 px na ekranie.
 const ICON_STROKE = 3.6;
 const GLOW_STROKE = ICON_STROKE + 2; // halo zawsze o 2 szersze od ścieżki
 const GLOW_OPACITY = 0.15; // krycie poświaty — wspólne dla rec_ai i gallery_ai

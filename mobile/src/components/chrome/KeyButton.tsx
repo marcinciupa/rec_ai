@@ -339,8 +339,14 @@ export function ScreenKey({
   // czy trwa przytrzymanie — na czas holdu chowamy statyczny pierścień (np. bieg SPEED), żeby
   // pierścień postępu był jedyną rzeczą, jaką widać; po zakończeniu wraca sam
   const [holding, setHolding] = useState(false);
+  // Numer przytrzymania. Wygaszenie pierścienia to animacja z callbackiem, a RN woła callback także
+  // wtedy, gdy animację PRZERWANO (`finished: false`) — czyli nowy hold rozpoczęty w trakcie zanikania
+  // poprzedniego dostawał od niego `setHolding(false)` i przez całe przytrzymanie widać było statyczny
+  // pierścień (np. bieg SPEED), który hold ma zakrywać. Callback działa więc tylko dla swojego holdu.
+  const holdSeq = useRef(0);
   const startHold = () => {
     completed.current = false;
+    const seq = ++holdSeq.current;
     setHolding(true);
     onHoldStart?.(); // np. UNDO: reset okna auto-zamknięcia, żeby zdążyć dokończyć hold
     progress.setValue(0);
@@ -352,13 +358,18 @@ export function ScreenKey({
       hapticRelease(); // mocny impuls potwierdzający wykonanie
       // pierścień COFA SIĘ do stanu początkowego, zamiast znikać skokiem — akcja się wykonała,
       // więc kontrolka ma wrócić do spoczynku w sposób widoczny, a nie zgasnąć w jednej klatce
-      Animated.timing(progress, { toValue: 0, duration: 250, useNativeDriver: false }).start(() => setHolding(false));
+      Animated.timing(progress, { toValue: 0, duration: 250, useNativeDriver: false }).start(() => {
+        if (holdSeq.current === seq) setHolding(false);
+      });
     }, holdMs);
   };
   const cancelHold = () => {
+    const seq = holdSeq.current;
     clearTimeout(holdTimer.current);
     progress.stopAnimation();
-    Animated.timing(progress, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => setHolding(false));
+    Animated.timing(progress, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => {
+      if (holdSeq.current === seq) setHolding(false);
+    });
     if (!completed.current) hapticCancel(); // puszczono przed końcem → przerwij wibrację
   };
   // pierścień hold: na ciemnym tekście (primary/highRisk = jasne/czerwone tło) ciemny; risk = czerwony; reszta phosphor

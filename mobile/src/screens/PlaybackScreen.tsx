@@ -21,7 +21,6 @@ import type { KeyboardConfig, ScreenKeyDef } from '../components/chrome/Keyboard
 import type { KeyIconName } from '../components/icons/keyIcons.gen';
 import type { SliderConfig } from '../components/chrome/SeekSlider';
 import { ScreenTopBar, BottomBar, Mode, stopBackKey } from './ScreenChrome';
-import { Toast } from '../components/chrome/Toast';
 import type { Rec, RecordingsStore } from '../hooks/useRecordings';
 import { displayName } from '../hooks/useRecordings';
 import { deriveAiStatus, type TranscriptionStore } from '../hooks/useTranscription';
@@ -494,6 +493,7 @@ export function usePlaybackScreen({
   onConsumePending,
   recordingsRequest = 0,
   onToggleTimer,
+  onToast,
 }: {
   store: RecordingsStore;
   mono?: boolean;
@@ -512,6 +512,7 @@ export function usePlaybackScreen({
   onConsumePending?: () => void;
   recordingsRequest?: number; // licznik z klawisza RECORDINGS → reset widoku na LIST
   onToggleTimer?: () => void; // tap timera w playerze → przełącz ELAPSED/REMAINING (PLAYBACK TIMER w Settings)
+  onToast?: (text: string, ms?: number) => void; // pigułka-toast należy do App (jedna warstwa na całą apkę)
 }) {
   const { recordings: recs, removeById, insertAt } = store;
   // wolne miejsce (realne) — odświeżane przy zmianie jakości i liczby nagrań; null → linijki brak
@@ -527,22 +528,19 @@ export function usePlaybackScreen({
   const [loadPct, setLoadPct] = useState(0);
   const [speed, setSpeed] = useState(1); // 1× / 2×
   const [transcript, setTranscript] = useState<Transcript | null>(null); // treść transkryptu w playerze
+  // id nagrania, do którego należy `transcript` — wczytanie jest asynchroniczne, a przy zmianie nagrania
+  // w playerze starej treści celowo NIE czyścimy (unikamy mignięcia), więc trzeba wiedzieć, czyja jest.
+  const [transcriptFor, setTranscriptFor] = useState<string | null>(null);
   const [scrubDisplay, setScrubDisplay] = useState<number | null>(null); // pozycja w trakcie przewijania (płynny waveform; null = czytaj z odtwarzacza)
   // pozycja wymuszona skokiem prev/next między segmentami — MA PRIORYTET nad currentTime, dopóki odtwarzacz
   // do niej nie dojedzie. Bez tego: po seekTo status (currentTime) spóźnia się, więc kolejny prev/next liczy
   // bieżący segment od STAREJ pozycji i celuje w ten sam → nawigacja „stoi w miejscu". (null = brak wymuszenia)
   const [navPos, setNavPos] = useState<number | null>(null);
-  // TOAST — fosforowa pigułka u dołu ekranu (wzorzec z gallery_ai). Używany, gdy joystick wyjdzie
-  // poza transkrypt i zmieni NAGRANIE: sam ekran playera wygląda wtedy identycznie, więc bez nazwy
-  // nie widać, że gra już co innego.
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showToast = (msg: string, ms = 2000) => {
-    setToast(msg);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), ms);
-  };
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  // TOAST — fosforowa pigułka u dołu ekranu (wzorzec z gallery_ai). Player NIE rysuje jej sam: pigułka
+  // ma w apce JEDNEGO właściciela (App.tsx), bo pozycja jest stała (bottom 40) i dwie warstwy — ta
+  // z playera („2X SPEED", nazwa notatki po zmianie joystickiem) i ta o transkrypcji („… TRANSCRIBED")
+  // — rysowały się jedna na drugiej, nieczytelnie. Tu tylko ZGŁASZAMY zdarzenie; kto ostatni, ten widoczny.
+  const showToast = (msg: string, ms = 2000) => onToast?.(msg, ms);
   const navFromRef = useRef(0); // pozycja sprzed skoku — by zwolnić navPos gdy odtwarzacz DOJEDZIE do celu z właściwej strony
   const lastDeleted = useRef<{ rec: Rec; index: number; name: string } | null>(null);
   const timers = useRef<{ ret?: any }>({});
@@ -730,14 +728,18 @@ export function usePlaybackScreen({
   useEffect(() => {
     let alive = true;
     if ((view === 'PLAYER' || view === 'CHAT') && sel?.transcribed && sel?.id) {
-      getTranscript(sel.id)
+      const id = sel.id;
+      getTranscript(id)
         .then((t) => {
           // deAPI wkleja timestampy inline w tekst → rozparsuj na segmenty (format z projektu + prev/next)
-          if (alive) setTranscript(withParsedSegments(t));
+          if (!alive) return;
+          setTranscript(withParsedSegments(t));
+          setTranscriptFor(id);
         })
         .catch(() => {});
     } else {
       setTranscript(null);
+      setTranscriptFor(null);
     }
     return () => {
       alive = false;
@@ -897,7 +899,11 @@ export function usePlaybackScreen({
 
   const playerSkip = (d: -1 | 1) => {
     const n = recs.length;
-    if (!n) return;
+    // Jedno nagranie = nie ma na co przeskoczyć. Bez tego cykl `% n` wracał do TEJ SAMEJ notatki:
+    // toast z jej własną nazwą, przeładowanie od zera i — bo `selId` się nie zmieniał — brak resetu
+    // `navPos`, czyli highlight i timer stały zamrożone do momentu, aż odtwarzanie dojedzie z powrotem
+    // do poprzedniego celu. ⏪⏩ są w tej sytuacji wygaszone (canSwitchRec), joystick musi być spójny.
+    if (n < 2) return;
     const target = recs[(idx + d + n) % n]; // cyklicznie
     showToast(displayName(target, recs));
 
@@ -1025,8 +1031,12 @@ export function usePlaybackScreen({
     // w trakcie przewijania pokazuj lokalną pozycję scrubu (płynnie), inaczej realną z odtwarzacza
     const uiPos = scrubDisplay != null ? scrubDisplay : navPos != null ? navPos : realMode ? pstatus.currentTime : pos;
     const uiLen = realMode ? pstatus.duration || sel?.lengthSec || 0 : len;
-    // segmenty transkryptu → prev/next nawiguje po timestampach (zamiast skoku między nagraniami)
-    const segList = transcript?.segments ?? [];
+    // Segmenty transkryptu → prev/next nawiguje po timestampach (zamiast skoku między nagraniami).
+    // TYLKO gdy wczytany transkrypt należy do zaznaczonego nagrania: przy zmianie nagrania w playerze
+    // (joystick za skrajem, ⏪⏩) `transcript` zostaje z poprzedniej notatki na czas asynchronicznego
+    // wczytania nowej — bez tego warunku drugie naciśnięcie ↓ w tym okienku przewijało NOWE audio do
+    // timestampu ze STAREGO transkryptu, czyli w losowe miejsce.
+    const segList = transcriptFor === sel?.id ? transcript?.segments ?? [] : [];
     const hasSegNav = !!sel?.transcribed && segList.length > 0;
     const deleteKey = { label: 'DELETE', supporting: '[HOLD]', variant: 'risk' as const, onPress: askDelete, onHoldComplete: confirmDelete, holdMs: 2000 };
     // joystick w PLAYER — ↑↓ = krok po TREŚCI: najpierw wydzielone fragmenty transkryptu, a dopiero
@@ -1199,6 +1209,11 @@ export function usePlaybackScreen({
       // clamp do długości audio: sparsowany start segmentu (halucynowany ogon Whispera) bywa > realnej
       // długości pliku → bez tego currentTime nigdy nie dojedzie i navPos zamroziłby highlight/timer.
       const target = uiLen > 0 ? Math.max(0, Math.min(uiLen, raw)) : Math.max(0, raw);
+      // Po sklejeniu do końca pliku cel bywa RÓWNY bieżącej pozycji — skok nie istnieje, a zwrócone
+      // `true` kazałoby joystickowi uznać, że transkrypt ma jeszcze dokąd iść, i gałka grzęzłaby na
+      // ostatnim fragmencie zamiast przejść do następnego nagrania (dokładnie ten ogon, który clamp
+      // przycina). Brak realnego ruchu = skraj treści.
+      if (Math.abs(target - uiPos) < 0.05) return false;
       setScrubDisplay(null);
       navFromRef.current = uiPos;
       setNavPos(target);
@@ -1239,7 +1254,9 @@ export function usePlaybackScreen({
     const nameSize = sel ? `${displayName(sel, recs)} (${fileSize(sel)})` : '';
     const capStyle = { fontFamily: font.caption.family, fontSize: font.caption.size, color: screen.olive.secondary } as const;
     // nagranie transkrybowane → zamiast waveformu pokaż tekst transkryptu (Figma 161:12290)
-    const showTranscript = !loading && !!sel?.transcribed && !!transcript?.text;
+    // `transcriptFor === sel.id`: dopóki nie dojdzie transkrypt nowo wybranego nagrania, lepiej nie
+    // pokazać nic niż tekst POPRZEDNIEJ notatki (karaoke podświetlałoby wiersze do obcego audio).
+    const showTranscript = !loading && !!sel?.transcribed && !!transcript?.text && transcriptFor === sel?.id;
     const content = (
       <>
         <ScreenTopBar mode={mode} onCycleMode={undefined} ai={ai} labelActive={playing} />
@@ -1282,7 +1299,6 @@ export function usePlaybackScreen({
           </View>
         </View>
         <BottomBar active={playing} mono={mono} quality={quality} muted={false} level={sel?.samples && uiLen > 0 ? sel.samples[Math.min(sel.samples.length - 1, Math.floor((uiPos / uiLen) * sel.samples.length))] : null} />
-        <Toast text={toast} />
       </>
     );
     return { content, keyboard, slider, goBack };

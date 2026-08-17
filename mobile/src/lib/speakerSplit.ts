@@ -89,7 +89,16 @@ export function turnsToSpeakers(chunks: Chunk[], turns: unknown): number[] | nul
   }
   if (!marks.length) return null;
   marks.sort((a, b) => a.at - b.at);
-  const out = new Array<number>(chunks.length).fill(marks[0].speaker); // przed pierwszą kotwicą mówi ta sama osoba
+  // WSTĘP przed pierwszą kotwicą. Tura to miejsce ZMIANY mówcy, więc jeśli model pominął turę
+  // otwierającą (bywa — jest niejawna, a prompt pyta o miejsca, gdzie ktoś ZACZYNA mówić), to wstęp
+  // z definicji należy do KOGOŚ INNEGO niż pierwsza tura. Wcześniej dostawał jej numer, czyli
+  // wypowiedź osoby 1 była wyświetlana jako wypowiedź osoby 2 (i scalana z jej wierszem).
+  // Bierzemy najmniejszego INNEGO mówcę, jakiego model zadeklarował; gdy nie zadeklarował żadnego,
+  // sąsiedni numer — ktoś tam mówił, choć model go nie nazwał.
+  const head = marks[0].speaker;
+  const other = marks.map((m) => m.speaker).filter((s) => s !== head).sort((a, b) => a - b)[0];
+  const prefix = marks[0].at === 0 ? head : other ?? (head < 20 ? head + 1 : head - 1);
+  const out = new Array<number>(chunks.length).fill(prefix);
   for (const m of marks) for (let i = m.at; i < chunks.length; i++) out[i] = m.speaker;
   return new Set(out).size >= 2 ? out : null;
 }

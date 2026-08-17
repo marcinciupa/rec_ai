@@ -133,6 +133,52 @@ const FAR = { start: 123.0, end: 124.4, text: 'koniec. raz dwa trzy cztery pię�
 eq('koniec zdania poza oknem → bez zmian', snapSpeakersToSentences([FAR])[0].words.map((w) => w.speaker), FAR_WORDS.map((w) => w.speaker));
 eq('segmenty bez słów przechodzą bez zmian', snapSpeakersToSentences([{ start: 0, end: 1, text: 'x', words: null }])[0].words, null);
 
+// REGRESJA (code review 08/2026): dwie granice bliżej siebie niż okno snapowania. Wcześniej obie
+// przyciągały się do tego samego końca zdania i tura MIĘDZY nimi znikała — czyli funkcja psuła
+// diaryzację, która była poprawna. Krótkie wtrącenia („Tak.", „No?") są w rozmowie normalne.
+const SHORT_WORDS = ['A', 'potem', 'on', 'mówi', 'tak.', 'Dobra', 'to', 'jedziemy'].map(
+  late(['SPEAKER_00', 'SPEAKER_00', 'SPEAKER_00', 'SPEAKER_00', 'SPEAKER_01', 'SPEAKER_00', 'SPEAKER_00', 'SPEAKER_00'])
+);
+const SHORT = { start: 123.0, end: 124.6, text: 'A potem on mówi tak. Dobra to jedziemy', speaker: 'SPEAKER_00', words: SHORT_WORDS };
+const shortFixed = snapSpeakersToSentences([SHORT])[0];
+ok('jednosłowna tura NIE ginie przy snapowaniu', shortFixed.words.some((w) => w.speaker === 'SPEAKER_01'));
+eq('liczba tur zachowana (3)', shortFixed.words.map((w) => w.speaker).filter((s, i, a) => s !== a[i - 1]).length, 3);
+
+// trzy różne osoby pod rząd — żadne słowo nie może dostać etykiety osoby, która go nie powiedziała
+const TRIO_WORDS = ['A', 'potem', 'on', 'mówi', 'tak.', 'Dobra', 'no', 'to'].map(
+  late(['SPEAKER_00', 'SPEAKER_00', 'SPEAKER_00', 'SPEAKER_00', 'SPEAKER_01', 'SPEAKER_02', 'SPEAKER_02', 'SPEAKER_02'])
+);
+const TRIO = { start: 123.0, end: 124.6, text: 'A potem on mówi tak. Dobra no to', speaker: 'SPEAKER_00', words: TRIO_WORDS };
+const trioFixed = snapSpeakersToSentences([TRIO])[0];
+eq(
+  'kolejność mówców zachowana, bez zamiany etykiet',
+  trioFixed.words.map((w) => w.speaker).filter((s, i, a) => s !== a[i - 1]),
+  ['SPEAKER_00', 'SPEAKER_01', 'SPEAKER_02']
+);
+ok(
+  'każdy mówca ma co najmniej jedno słowo',
+  ['SPEAKER_00', 'SPEAKER_01', 'SPEAKER_02'].every((s) => trioFixed.words.some((w) => w.speaker === s))
+);
+// własność ogólna: snapowanie NIGDY nie zmienia zbioru ani kolejności tur, tylko ich granice
+{
+  let bad = 0;
+  const rnd = (n) => Math.floor((Math.sin(n * 12.9898) * 43758.5453) % 1 * 3 + 3) % 3; // deterministycznie
+  for (let t = 0; t < 200; t++) {
+    const spk = Array.from({ length: 10 }, (_, i) => `SPEAKER_0${rnd(t * 10 + i)}`);
+    const words = Array.from({ length: 10 }, (_, i) => ({
+      word: i % 3 === 2 ? `w${i}.` : `w${i}`, // co trzecie słowo kończy zdanie
+      start: 10 + i * 0.2,
+      end: 10.15 + i * 0.2,
+      speaker: spk[i],
+    }));
+    const seg = { start: 10, end: 12, text: words.map((w) => w.word).join(' '), speaker: spk[0], words };
+    const got = snapSpeakersToSentences([seg])[0].words.map((w) => w.speaker);
+    const turns = (a) => a.filter((s, i) => s !== a[i - 1]);
+    if (JSON.stringify(turns(got)) !== JSON.stringify(turns(spk))) bad++;
+  }
+  ok('własność: 200 losowych układów mówców — ciąg tur zawsze zachowany', bad === 0);
+}
+
 console.log('splitByWordSpeakers — cięcie tam, gdzie deAPI zmienia mówcę PRZY SŁOWIE');
 // Kształt z realnego nagrania: segment ma JEDNĄ etykietę zbiorczą, a słowa w środku należą do dwóch osób.
 const mixWords = [
@@ -203,6 +249,23 @@ eq('same śmieci → null', turnsToSpeakers(c4, [{ from: 'x', speaker: null }, 4
 eq('jedna tura = monolog → null (nie ruszamy segmentów)', turnsToSpeakers(c4, [{ from: 1, speaker: 1 }]), null);
 eq('absurdalny numer mówcy pomijany → zostaje monolog → null', turnsToSpeakers(c4, [{ from: 1, speaker: 1 }, { from: 2, speaker: 99 }]), null);
 eq('tury podane w złej kolejności są sortowane', turnsToSpeakers(c4, [{ from: 3, speaker: 2 }, { from: 1, speaker: 1 }]), [1, 1, 2]);
+// REGRESJA (code review 08/2026): model pominął turę OTWIERAJĄCĄ (bywa — jest niejawna). Wstęp przed
+// pierwszą kotwicą należy do KOGOŚ INNEGO niż ta kotwica, bo tura oznacza ZMIANĘ mówcy. Wcześniej
+// dostawał jej numer, czyli wypowiedź osoby 1 była pokazywana jako wypowiedź osoby 2.
+eq(
+  'brak tury otwierającej → wstęp dostaje innego mówcę, nie mówcę pierwszej tury',
+  turnsToSpeakers(c4, [{ from: 2, speaker: 2 }, { from: 3, speaker: 1 }]),
+  [1, 2, 1]
+);
+eq(
+  'brak tury otwierającej i tylko jeden zadeklarowany mówca → wstęp to sąsiedni numer',
+  turnsToSpeakers(c4, [{ from: 2, speaker: 1 }]),
+  [2, 1, 1]
+);
+ok(
+  'numery mówców zostają w zakresie akceptowanym przez applySpeakerTurns',
+  (turnsToSpeakers(c4, [{ from: 2, speaker: 20 }]) ?? []).every((n) => n >= 1 && n <= 20)
+);
 
 console.log('matchAnchor — cytat rozstrzyga, numer jest podpowiedzią');
 eq('trafiony numer + zgodny cytat', matchAnchor(c4, 1, 'Wszystko dobrze'), 1);

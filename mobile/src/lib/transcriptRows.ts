@@ -81,6 +81,16 @@ const SENTENCE_END = /[.!?…]["'”’)]?$/;
  * zmiany jest koniec zdania, przesuwamy ją tam. Okno jest wąskie celowo: korygujemy spóźnienie
  * o kilka słów, a nie przenosimy granicy w inne miejsce rozmowy. Zmiany bez końca zdania w pobliżu
  * (wejście w słowo w środku zdania) zostają tam, gdzie były.
+ *
+ * PRZESUWAMY WYŁĄCZNIE GRANICE — liczba tur i ich etykiety są nienaruszalne. Wcześniejsza wersja
+ * snapowała każdą granicę niezależnie i nadpisywała etykiety w przesuwanym zakresie, więc dwie
+ * granice bliższe sobie niż `maxShift` potrafiły spotkać się w tym samym końcu zdania i skasować
+ * turę między nimi: „S0 S0 | S1(„Tak.") | S0" wychodziło jako jednolite S0, a „S0 | S1 | S2" —
+ * jako S0 S0 S1 S1 S2, czyli słowa przypisane osobie, która ich nie powiedziała. Dlatego każda
+ * granica ma teraz sufit i podłogę wyznaczone przez sąsiadki (`lo`/`hi`): w każdej turze zostaje
+ * co najmniej jedno słowo, a etykiety odtwarzamy z ORYGINALNEJ listy tur, nie z łatania zakresów.
+ * Krótkie tury i wtrącenia („Tak.", „No?") są w rozmowie normalne, a ta funkcja chodzi bezwarunkowo
+ * przed całą resztą — więc nie może psuć danych, które diaryzacja dała poprawnie.
  */
 export function snapSpeakersToSentences(segments: Segment[], maxShift = 3, maxSec = 1.5): Segment[] {
   const flat: { w: Word; seg: number; i: number }[] = [];
@@ -89,27 +99,38 @@ export function snapSpeakersToSentences(segments: Segment[], maxShift = 3, maxSe
 
   const speakers = flat.map((f) => f.w.speaker ?? null);
   const endsSentence = (k: number) => SENTENCE_END.test((flat[k].w.word ?? '').trim());
-  const next = [...speakers];
-  let moved = false;
 
-  for (let k = 1; k < flat.length; k++) {
-    if (speakers[k] === speakers[k - 1]) continue;
-    // najbliższa pozycja, PRZED którą kończy się zdanie (czyli słowo k-1 ma kropkę)
+  // tury = etykieta + granica startowa; granica 0 jest domyślna i nie podlega przesuwaniu
+  const bounds: number[] = [];
+  for (let k = 1; k < flat.length; k++) if (speakers[k] !== speakers[k - 1]) bounds.push(k);
+  if (!bounds.length) return segments;
+  const labels = [speakers[0], ...bounds.map((k) => speakers[k])];
+
+  const moved: number[] = [];
+  bounds.forEach((k, bi) => {
+    // podłoga: za już USTALONĄ poprzednią granicą (+1 słowo dla poprzedniej tury);
+    // sufit: przed ORYGINALNĄ następną (−1 słowo dla tej tury). Zakres zawsze zawiera samo `k`.
+    const lo = (moved[bi - 1] ?? 0) + 1;
+    const hi = (bounds[bi + 1] ?? flat.length) - 1;
     let best: number | null = null;
-    for (let j = Math.max(1, k - maxShift); j <= Math.min(flat.length - 1, k + maxShift); j++) {
+    // najbliższa pozycja, PRZED którą kończy się zdanie (czyli słowo j-1 ma kropkę)
+    for (let j = Math.max(lo, k - maxShift); j <= Math.min(hi, k + maxShift); j++) {
       if (!endsSentence(j - 1)) continue;
       const dt = Math.abs((flat[j].w.start ?? 0) - (flat[k].w.start ?? 0));
       if (dt > maxSec) continue;
       if (best === null || Math.abs(j - k) < Math.abs(best - k)) best = j;
     }
-    if (best === null || best === k) continue;
-    // przepisz etykiety słów między starą a nową granicą (tylko one się zmieniają)
-    const [from, to] = best < k ? [best, k] : [k, best];
-    const label = best < k ? speakers[k] : speakers[k - 1];
-    for (let j = from; j < to; j++) next[j] = label;
-    moved = true;
-  }
-  if (!moved) return segments;
+    moved.push(best ?? k);
+  });
+  if (moved.every((k, i) => k === bounds[i])) return segments;
+
+  // etykiety odtworzone z tur — żadna tura nie może zniknąć ani zmienić mówcy
+  const next = [...speakers];
+  const starts = [0, ...moved];
+  starts.forEach((from, t) => {
+    const to = starts[t + 1] ?? flat.length;
+    for (let j = from; j < to; j++) next[j] = labels[t];
+  });
 
   let p = 0;
   return segments.map((s) => {
