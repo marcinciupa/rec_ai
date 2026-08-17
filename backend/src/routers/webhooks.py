@@ -4,6 +4,7 @@ Weryfikuje HMAC, a dla zdarzeń terminalnych odblokowuje oczekujący request (wa
 Payload deAPI: {event, delivery_id, timestamp, data:{job_request_id, status, job_type, result_url?, error_*?}}.
 Transkrypt NIE jest inline → pobieramy z result_url. Idempotentny, szybko zwraca 200."""
 import json
+from urllib.parse import urlsplit
 
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -83,9 +84,19 @@ async def deapi_webhook(
                 # NIE loguj str(e) ani nie odbijaj go do klienta: httpx.HTTPStatusError skleja
                 # komunikat z URL-em żądania, a `result_url` jest PRESIGNED — to jednorazowe
                 # poświadczenie do artefaktu z transkryptem. W logu (i w odpowiedzi 502) wylądowałby
-                # link do treści, co przeczy obietnicy „metadane bez treści". Zostaje typ wyjątku.
-                log.warning("deapi_result_fetch_failed", request_id=request_id, error_type=type(e).__name__)
-                delivered = waiters.resolve(request_id, {"error": f"result fetch failed: {type(e).__name__}"})
+                # link do treści, co przeczy obietnicy „metadane bez treści".
+                # Zostaje to, co diagnozuje i nie jest poświadczeniem: typ, kod HTTP i SAM HOST
+                # (poświadczenie siedzi w ścieżce i query, więc ich nie tykamy). Bez kodu 403
+                # (wygasły link) było nie do odróżnienia od 500 po stronie CDN.
+                resp = getattr(e, "response", None)
+                log.warning(
+                    "deapi_result_fetch_failed",
+                    request_id=request_id,
+                    error_type=type(e).__name__,
+                    status_code=getattr(resp, "status_code", None),
+                    result_host=urlsplit(result_url).hostname,
+                )
+                waiters.resolve(request_id, {"error": f"result fetch failed: {type(e).__name__}"})
                 return {"ok": True}
 
     delivered = waiters.resolve(request_id, parsed)

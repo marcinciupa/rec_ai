@@ -7,6 +7,7 @@ language oraz — dla modelu CT2 — diarize (bool) i ts_level (enum, `word`).
 i tak jedziemy webhookiem. Endpoint/model sterowane configiem."""
 import ipaddress
 import json
+import math
 from urllib.parse import urlsplit
 
 import httpx
@@ -67,39 +68,54 @@ def parse_transcript_payload(payload) -> dict:
         for s in segments_raw:
             if not isinstance(s, dict):
                 continue
-            start, end = s.get("start"), s.get("end")
+            # Rzutuj PRZED fallbackiem na `timestamp`: inaczej brudny `start` (np. "00:00:01")
+            # dawał None dopiero po sprawdzeniu `start is None`, więc dobra para `timestamp`
+            # nigdy nie wchodziła i traciliśmy odzyskiwalne czasy (a od nich zależy seek i karaoke).
+            start, end = _as_float(s.get("start")), _as_float(s.get("end"))
             ts = s.get("timestamp")
             if start is None and isinstance(ts, list) and len(ts) == 2:
-                start, end = ts[0], ts[1]
+                start, end = _as_float(ts[0]), _as_float(ts[1])
             seg = {
-                # Wymuś float|None JUŻ TUTAJ. Schemat odpowiedzi deklaruje `float | None`, więc
-                # nieliczbowa wartość od deAPI (np. "00:00:01") wywracałaby się dopiero na walidacji
-                # odpowiedzi — a ResponseValidationError wkłada do komunikatu `input`, czyli tekst
-                # segmentu, i przez catch-all trafiłby do logów. Logi mają być bez treści.
-                "start": _as_float(start),
-                "end": _as_float(end),
-                "text": s.get("text") or s.get("transcript") or "",
+                # Każde pole rzutowane JUŻ TUTAJ na typ ze schematu odpowiedzi. Wartość spoza
+                # kontraktu wywracałaby się dopiero na walidacji ODPOWIEDZI, a komunikat
+                # ResponseValidationError niesie odrzuconą wartość w polu `input` — dla `text`
+                # czy `transcript` jest nią TREŚĆ TRANSKRYPTU. Logi mają być bez treści.
+                "start": start,
+                "end": end,
+                "text": _as_str(s.get("text")) or _as_str(s.get("transcript")) or "",
                 # tylko advanced+diarize; None dla standard → apka chowa kolumnę rozmówców
-                "speaker": s.get("speaker"),
+                "speaker": _as_str(s.get("speaker")),
                 "words": _parse_words(s.get("words")),
             }
             segments.append(seg)
-    return {"transcript": text, "segments": segments, "language": data.get("language")}
+    return {"transcript": _as_str(text), "segments": segments, "language": _as_str(data.get("language"))}
 
 
 def _as_float(v) -> float | None:
     """Czas z odpowiedzi deAPI → float albo None. Nigdy nie rzuca: wartość spoza kontraktu ma
-    zniknąć tutaj, a nie wywrócić walidację odpowiedzi (patrz komentarz przy segmentach)."""
+    zniknąć tutaj, a nie wywrócić walidację odpowiedzi (patrz komentarz przy segmentach).
+
+    `inf`/`nan` odpadają razem z resztą: pydantic je PRZEPUSZCZA, ale `JSONResponse` renderuje
+    z `allow_nan=False`, więc dopiero serializacja wywalałaby 500 i gubiła cały transkrypt.
+    Uwaga: `json.loads('{"start": NaN}')` w Pythonie działa, więc nie trzeba nawet stringa.
+    """
     if isinstance(v, bool) or v is None:
         return None
     if isinstance(v, (int, float)):
-        return float(v)
-    if isinstance(v, str):
+        f = float(v)
+    elif isinstance(v, str):
         try:
-            return float(v.strip())
+            f = float(v.strip())
         except ValueError:
             return None
-    return None
+    else:
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _as_str(v) -> str | None:
+    """Pole tekstowe z odpowiedzi deAPI → str albo None (nigdy nie rzuca, patrz `_as_float`)."""
+    return v if isinstance(v, str) else None
 
 
 def _parse_words(raw) -> list[dict] | None:
@@ -111,11 +127,16 @@ def _parse_words(raw) -> list[dict] | None:
     for w in raw:
         if not isinstance(w, dict):
             continue
-        word = w.get("word") or w.get("text")
+        word = _as_str(w.get("word")) or _as_str(w.get("text"))
         if not word:
             continue
         out.append(
-            {"word": word, "start": _as_float(w.get("start")), "end": _as_float(w.get("end")), "speaker": w.get("speaker")}
+            {
+                "word": word,
+                "start": _as_float(w.get("start")),
+                "end": _as_float(w.get("end")),
+                "speaker": _as_str(w.get("speaker")),
+            }
         )
     return out or None
 
