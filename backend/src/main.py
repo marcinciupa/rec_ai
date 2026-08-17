@@ -86,7 +86,11 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def _unhandled(request, exc: Exception):
-        structlog.get_logger().error("unhandled_error", error=str(exc))
+        # Z tego samego powodu co wyżej NIE logujemy str(exc): komunikat wyjątku bywa nośnikiem
+        # treści (np. ResponseValidationError Pydantica wkłada do niego `input`, czyli fragment
+        # transkryptu). Polityka prywatności obiecuje logi bez treści — sama nazwa klasy wystarcza,
+        # żeby zlokalizować błąd, a ścieżkę wskazuje log dostępowy.
+        structlog.get_logger().error("unhandled_error", error_type=type(exc).__name__)
         return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
     app.include_router(health.router)

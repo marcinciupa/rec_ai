@@ -72,8 +72,12 @@ def parse_transcript_payload(payload) -> dict:
             if start is None and isinstance(ts, list) and len(ts) == 2:
                 start, end = ts[0], ts[1]
             seg = {
-                "start": start,
-                "end": end,
+                # Wymuś float|None JUŻ TUTAJ. Schemat odpowiedzi deklaruje `float | None`, więc
+                # nieliczbowa wartość od deAPI (np. "00:00:01") wywracałaby się dopiero na walidacji
+                # odpowiedzi — a ResponseValidationError wkłada do komunikatu `input`, czyli tekst
+                # segmentu, i przez catch-all trafiłby do logów. Logi mają być bez treści.
+                "start": _as_float(start),
+                "end": _as_float(end),
                 "text": s.get("text") or s.get("transcript") or "",
                 # tylko advanced+diarize; None dla standard → apka chowa kolumnę rozmówców
                 "speaker": s.get("speaker"),
@@ -81,6 +85,21 @@ def parse_transcript_payload(payload) -> dict:
             }
             segments.append(seg)
     return {"transcript": text, "segments": segments, "language": data.get("language")}
+
+
+def _as_float(v) -> float | None:
+    """Czas z odpowiedzi deAPI → float albo None. Nigdy nie rzuca: wartość spoza kontraktu ma
+    zniknąć tutaj, a nie wywrócić walidację odpowiedzi (patrz komentarz przy segmentach)."""
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v.strip())
+        except ValueError:
+            return None
+    return None
 
 
 def _parse_words(raw) -> list[dict] | None:
@@ -95,7 +114,9 @@ def _parse_words(raw) -> list[dict] | None:
         word = w.get("word") or w.get("text")
         if not word:
             continue
-        out.append({"word": word, "start": w.get("start"), "end": w.get("end"), "speaker": w.get("speaker")})
+        out.append(
+            {"word": word, "start": _as_float(w.get("start")), "end": _as_float(w.get("end")), "speaker": w.get("speaker")}
+        )
     return out or None
 
 
